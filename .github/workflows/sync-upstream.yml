@@ -1,0 +1,33 @@
+name: Sync main with upstream
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force-sync (overwrites any local commits on main)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    name: Sync main from flowcatalyst/flowcatalyst
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync fork
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ "${{ inputs.force }}" = "true" ]; then
+            ARGS+=(--force)
+          fi
+          gh repo sync "${{ github.repository }}" \
+            --source flowcatalyst/flowcatalyst \
+            --branch main \
+            "${ARGS[@]}"
