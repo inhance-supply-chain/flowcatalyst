@@ -8,9 +8,9 @@
  */
 
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
-import type { SdkError } from "../errors";
-import { mapHttpStatusToError, httpError } from "../errors";
-import type { FlowCatalystClient } from "../client";
+import type { SdkError } from "../errors.js";
+import { mapHttpStatusToError, httpError } from "../errors.js";
+import type { FlowCatalystClient } from "../client.js";
 
 export interface InPipelineDetail {
 	messageId: string;

@@ -5,9 +5,9 @@
  */
 
 import type { ResultAsync } from "neverthrow";
-import type { SdkError } from "../errors";
-import type { FlowCatalystClient } from "../client";
-import * as sdk from "../generated/sdk.gen";
+import type { SdkError } from "../errors.js";
+import type { FlowCatalystClient } from "../client.js";
+import * as sdk from "../generated/sdk.gen.js";
 import type {
 	GetApiPrincipalsData,
 	GetApiPrincipalsResponse,
@@ -19,7 +19,7 @@ import type {
 	GetApiPrincipalsByIdClientAccessResponse,
 	PostApiApplicationsByAppCodePrincipalsSyncData,
 	PostApiApplicationsByAppCodePrincipalsSyncResponse,
-} from "../generated/types.gen";
+} from "../generated/types.gen.js";
 
 export type PrincipalListResponse = GetApiPrincipalsResponse;
 export type PrincipalDto = GetApiPrincipalsByIdResponse;

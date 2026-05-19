@@ -9,8 +9,8 @@
  */
 
 import type { ResultAsync } from "neverthrow";
-import type { SdkError } from "../errors";
-import type { FlowCatalystClient } from "../client";
+import type { SdkError } from "../errors.js";
+import type { FlowCatalystClient } from "../client.js";
 
 export interface DispatchPoolDto {
 	id: string;

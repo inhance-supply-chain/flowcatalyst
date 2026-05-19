@@ -6,32 +6,32 @@
  */
 
 import { ResultAsync, ok, err, errAsync } from "neverthrow";
-import { createClient, createConfig } from "./generated/client";
-import type { Client } from "./generated/client";
-import { OidcTokenManager, type TokenManagerConfig } from "./auth";
-import type { SdkError } from "./errors";
-import { mapHttpStatusToError, httpError, authError } from "./errors";
+import { createClient, createConfig } from "./generated/client/index.js";
+import type { Client } from "./generated/client/index.js";
+import { OidcTokenManager, type TokenManagerConfig } from "./auth.js";
+import type { SdkError } from "./errors.js";
+import { mapHttpStatusToError, httpError, authError } from "./errors.js";
 
 // Re-export resource classes
-import { AuditLogsResource } from "./resources/audit-logs";
-import { EventTypesResource } from "./resources/event-types";
-import { ProcessesResource } from "./resources/processes";
-import { SubscriptionsResource } from "./resources/subscriptions";
-import { DispatchPoolsResource } from "./resources/dispatch-pools";
-import { RolesResource } from "./resources/roles";
-import { PermissionsResource } from "./resources/permissions";
-import { ApplicationsResource } from "./resources/applications";
-import { ClientsResource } from "./resources/clients";
-import { PrincipalsResource } from "./resources/principals";
-import { MeResource } from "./resources/me";
-import { ConnectionsResource } from "./resources/connections";
-import { DefinitionSynchronizer } from "./sync/definition-synchronizer";
-import { RouterResource } from "./resources/router";
-import { ScheduledJobsResource } from "./resources/scheduled-jobs";
+import { AuditLogsResource } from "./resources/audit-logs.js";
+import { EventTypesResource } from "./resources/event-types.js";
+import { ProcessesResource } from "./resources/processes.js";
+import { SubscriptionsResource } from "./resources/subscriptions.js";
+import { DispatchPoolsResource } from "./resources/dispatch-pools.js";
+import { RolesResource } from "./resources/roles.js";
+import { PermissionsResource } from "./resources/permissions.js";
+import { ApplicationsResource } from "./resources/applications.js";
+import { ClientsResource } from "./resources/clients.js";
+import { PrincipalsResource } from "./resources/principals.js";
+import { MeResource } from "./resources/me.js";
+import { ConnectionsResource } from "./resources/connections.js";
+import { DefinitionSynchronizer } from "./sync/definition-synchronizer.js";
+import { RouterResource } from "./resources/router.js";
+import { ScheduledJobsResource } from "./resources/scheduled-jobs.js";
 import {
 	ScheduledJobRunner,
 	type RunnerOptions,
-} from "./runner/scheduled-job-runner";
+} from "./runner/scheduled-job-runner.js";
 
 /**
  * Configuration for client credentials authentication.

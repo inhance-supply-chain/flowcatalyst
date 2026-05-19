@@ -39,7 +39,7 @@
 		}
 	},
 	"scripts": {
-		"build": "tsc && node scripts/fix-esm-extensions.mjs",
+		"build": "tsc",
 		"dev": "tsc --watch",
 		"generate": "openapi-ts",
 		"generate:live": "OPENAPI_LIVE=true openapi-ts",

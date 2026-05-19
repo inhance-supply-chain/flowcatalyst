@@ -35,12 +35,12 @@ export {
 	type SubscriptionMode,
 	type DispatchPoolDefinition,
 	type PrincipalDefinition,
-} from "./definitions";
+} from "./definitions.js";
 
 export {
 	DefinitionSynchronizer,
 	type SyncOptions,
-} from "./definition-synchronizer";
+} from "./definition-synchronizer.js";
 
 export {
 	isSynced,
@@ -49,4 +49,4 @@ export {
 	type CategorySyncResult,
 	type SkippedSyncResult,
 	type MaybeCategoryResult,
-} from "./result";
+} from "./result.js";

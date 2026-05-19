@@ -4,24 +4,24 @@
  * High-level wrappers around the generated SDK functions.
  */
 
-export { EventTypesResource } from "./event-types";
-export { ProcessesResource } from "./processes";
-export { SubscriptionsResource } from "./subscriptions";
-export { DispatchPoolsResource } from "./dispatch-pools";
-export { RolesResource } from "./roles";
-export { PermissionsResource } from "./permissions";
-export { ApplicationsResource } from "./applications";
-export { ClientsResource } from "./clients";
-export { PrincipalsResource } from "./principals";
+export { EventTypesResource } from "./event-types.js";
+export { ProcessesResource } from "./processes.js";
+export { SubscriptionsResource } from "./subscriptions.js";
+export { DispatchPoolsResource } from "./dispatch-pools.js";
+export { RolesResource } from "./roles.js";
+export { PermissionsResource } from "./permissions.js";
+export { ApplicationsResource } from "./applications.js";
+export { ClientsResource } from "./clients.js";
+export { PrincipalsResource } from "./principals.js";
 export {
 	MeResource,
 	type MyClient,
 	type MyClientsResponse,
 	type MyApplication,
 	type MyApplicationsResponse,
-} from "./me";
-export { ConnectionsResource } from "./connections";
-export { AuditLogsResource } from "./audit-logs";
+} from "./me.js";
+export { ConnectionsResource } from "./connections.js";
+export { AuditLogsResource } from "./audit-logs.js";
 export {
 	ScheduledJobsResource,
 	type ScheduledJob,
@@ -41,4 +41,4 @@ export {
 	type InstanceCompleteRequest,
 	type PaginatedJobs,
 	type PaginatedInstances,
-} from "./scheduled-jobs";
+} from "./scheduled-jobs.js";

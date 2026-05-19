@@ -17,8 +17,8 @@
  * fires return immediately without invoking the handler.
  */
 
-import type { ScheduledJobsResource } from "../resources/scheduled-jobs";
-import { type LockProvider, NoOpLockProvider } from "./lock-provider";
+import type { ScheduledJobsResource } from "../resources/scheduled-jobs.js";
+import { type LockProvider, NoOpLockProvider } from "./lock-provider.js";
 
 /** Envelope shape POSTed by the platform dispatcher. */
 export interface ScheduledJobEnvelope {

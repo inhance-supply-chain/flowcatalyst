@@ -6,9 +6,9 @@
  */
 
 import type { ResultAsync } from "neverthrow";
-import type { SdkError } from "../errors";
-import type { FlowCatalystClient } from "../client";
-import * as sdk from "../generated/sdk.gen";
+import type { SdkError } from "../errors.js";
+import type { FlowCatalystClient } from "../client.js";
+import * as sdk from "../generated/sdk.gen.js";
 import type {
 	GetApiAuditLogsData,
 	GetApiAuditLogsResponse,
@@ -16,7 +16,7 @@ import type {
 	GetApiAuditLogsRecentResponse,
 	GetApiAuditLogsEntityByEntityTypeByEntityIdResponse,
 	GetApiAuditLogsPrincipalByPrincipalIdResponse,
-} from "../generated/types.gen";
+} from "../generated/types.gen.js";
 
 export type AuditLogFilters = GetApiAuditLogsData["query"];
 export type AuditLogListResponse = GetApiAuditLogsResponse;

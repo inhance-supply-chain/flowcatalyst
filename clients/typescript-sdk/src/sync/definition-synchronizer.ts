@@ -7,8 +7,8 @@
  */
 
 import { okAsync, type ResultAsync } from "neverthrow";
-import type { FlowCatalystClient } from "../client";
-import type { SdkError } from "../errors";
+import type { FlowCatalystClient } from "../client.js";
+import type { SdkError } from "../errors.js";
 import type {
 	DefinitionSet,
 	EventTypeDefinition,
@@ -16,13 +16,13 @@ import type {
 	RoleDefinition,
 	SubscriptionDefinition,
 	DispatchPoolDefinition,
-} from "./definitions";
+} from "./definitions.js";
 import type {
 	CategorySyncResult,
 	MaybeCategoryResult,
 	SyncResult,
-} from "./result";
-import { SKIPPED } from "./result";
+} from "./result.js";
+import { SKIPPED } from "./result.js";
 
 /** Options for a sync call. */
 export interface SyncOptions {
