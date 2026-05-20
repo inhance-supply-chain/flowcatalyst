@@ -45,6 +45,17 @@ final class SyncOptions
          * Whether to sync processes (workflow documentation).
          */
         public readonly bool $syncProcesses = true,
+
+        /**
+         * Whether to sync scheduled jobs (cron-driven background work).
+         */
+        public readonly bool $syncScheduledJobs = true,
+
+        /**
+         * Whether to publish the OpenAPI spec attached to the
+         * definition set (single-document; replaces prior version).
+         */
+        public readonly bool $syncOpenapi = true,
     ) {}
 
     /**
@@ -75,6 +86,8 @@ final class SyncOptions
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: false,
+            syncScheduledJobs: false,
+            syncOpenapi: false,
         );
     }
 
@@ -90,6 +103,8 @@ final class SyncOptions
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: false,
+            syncScheduledJobs: false,
+            syncOpenapi: false,
         );
     }
 
@@ -105,6 +120,8 @@ final class SyncOptions
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: false,
+            syncScheduledJobs: false,
+            syncOpenapi: false,
         );
     }
 
@@ -120,6 +137,8 @@ final class SyncOptions
             syncDispatchPools: true,
             syncPrincipals: false,
             syncProcesses: false,
+            syncScheduledJobs: false,
+            syncOpenapi: false,
         );
     }
 
@@ -135,6 +154,8 @@ final class SyncOptions
             syncDispatchPools: false,
             syncPrincipals: true,
             syncProcesses: false,
+            syncScheduledJobs: false,
+            syncOpenapi: false,
         );
     }
 
@@ -150,6 +171,42 @@ final class SyncOptions
             syncDispatchPools: false,
             syncPrincipals: false,
             syncProcesses: true,
+            syncScheduledJobs: false,
+            syncOpenapi: false,
+        );
+    }
+
+    /**
+     * Create options that only sync scheduled jobs.
+     */
+    public static function scheduledJobsOnly(): self
+    {
+        return new self(
+            syncRoles: false,
+            syncEventTypes: false,
+            syncSubscriptions: false,
+            syncDispatchPools: false,
+            syncPrincipals: false,
+            syncProcesses: false,
+            syncScheduledJobs: true,
+            syncOpenapi: false,
+        );
+    }
+
+    /**
+     * Create options that only publish the attached OpenAPI document.
+     */
+    public static function openapiOnly(): self
+    {
+        return new self(
+            syncRoles: false,
+            syncEventTypes: false,
+            syncSubscriptions: false,
+            syncDispatchPools: false,
+            syncPrincipals: false,
+            syncProcesses: false,
+            syncScheduledJobs: false,
+            syncOpenapi: true,
         );
     }
 
@@ -166,6 +223,8 @@ final class SyncOptions
             syncDispatchPools: $this->syncDispatchPools,
             syncPrincipals: $this->syncPrincipals,
             syncProcesses: $this->syncProcesses,
+            syncScheduledJobs: $this->syncScheduledJobs,
+            syncOpenapi: $this->syncOpenapi,
         );
     }
 }

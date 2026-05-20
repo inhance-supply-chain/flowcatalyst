@@ -11,6 +11,7 @@ use FlowCatalyst\DTOs\Requests\SyncEventTypeEntry;
 use FlowCatalyst\DTOs\Requests\SyncPrincipalEntry;
 use FlowCatalyst\DTOs\Requests\SyncProcessEntry;
 use FlowCatalyst\DTOs\Requests\SyncRoleEntry;
+use FlowCatalyst\DTOs\Requests\SyncScheduledJobEntry;
 use FlowCatalyst\DTOs\Requests\SyncSubscriptionEntry;
 
 /**
@@ -69,6 +70,8 @@ class DefinitionSynchronizer
         $dispatchPoolsResult = ['created' => 0, 'updated' => 0, 'deleted' => 0];
         $principalsResult = ['created' => 0, 'updated' => 0, 'deleted' => 0];
         $processesResult = ['created' => 0, 'updated' => 0, 'deleted' => 0];
+        $scheduledJobsResult = ['created' => 0, 'updated' => 0, 'deleted' => 0];
+        $openapiResult = ['created' => 0, 'updated' => 0, 'deleted' => 0];
 
         // Sync roles
         if ($options->syncRoles && $definitions->hasRoles()) {
@@ -100,6 +103,16 @@ class DefinitionSynchronizer
             $processesResult = $this->syncProcesses($appCode, $definitions->getProcesses(), $options->removeUnlisted);
         }
 
+        // Sync scheduled jobs
+        if ($options->syncScheduledJobs && $definitions->hasScheduledJobs()) {
+            $scheduledJobsResult = $this->syncScheduledJobs($appCode, $definitions->getScheduledJobs(), $options->removeUnlisted);
+        }
+
+        // Publish attached OpenAPI document
+        if ($options->syncOpenapi && $definitions->hasOpenapiSpec()) {
+            $openapiResult = $this->syncOpenapi($appCode, $definitions->getOpenapiSpec());
+        }
+
         return new SyncResult(
             applicationCode: $appCode,
             roles: $rolesResult,
@@ -108,6 +121,8 @@ class DefinitionSynchronizer
             dispatchPools: $dispatchPoolsResult,
             principals: $principalsResult,
             processes: $processesResult,
+            scheduledJobs: $scheduledJobsResult,
+            openapi: $openapiResult,
         );
     }
 
@@ -443,6 +458,97 @@ class DefinitionSynchronizer
                 'created' => $result->created,
                 'updated' => $result->updated,
                 'deleted' => $result->deleted,
+            ];
+        } catch (\Exception $e) {
+            return [
+                'created' => 0,
+                'updated' => 0,
+                'deleted' => 0,
+                'error' => $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Sync scheduled jobs for an application.
+     *
+     * The platform's scheduled-jobs sync endpoint uses `archiveUnlisted` in
+     * the body rather than `removeUnlisted` as a query string; we translate.
+     *
+     * @param string $appCode Application code
+     * @param array<array<string, mixed>> $jobs Scheduled-job definitions
+     * @param bool $removeUnlisted Archive jobs present on the platform but missing locally
+     * @return array{created: int, updated: int, deleted: int, error?: string}
+     */
+    private function syncScheduledJobs(string $appCode, array $jobs, bool $removeUnlisted): array
+    {
+        try {
+            $entries = array_map(
+                fn(array $row) => new SyncScheduledJobEntry(
+                    code: (string) ($row['code'] ?? ''),
+                    name: (string) ($row['name'] ?? ''),
+                    crons: array_map(static fn($c) => (string) $c, (array) ($row['crons'] ?? [])),
+                    description: isset($row['description']) ? (string) $row['description'] : null,
+                    timezone: isset($row['timezone']) ? (string) $row['timezone'] : 'UTC',
+                    payload: $row['payload'] ?? null,
+                    concurrent: (bool) ($row['concurrent'] ?? false),
+                    tracksCompletion: (bool) ($row['tracksCompletion'] ?? false),
+                    timeoutSeconds: isset($row['timeoutSeconds']) ? (int) $row['timeoutSeconds'] : null,
+                    deliveryMaxAttempts: isset($row['deliveryMaxAttempts']) ? (int) $row['deliveryMaxAttempts'] : 3,
+                    targetUrl: isset($row['targetUrl']) ? (string) $row['targetUrl'] : null,
+                ),
+                $jobs,
+            );
+            $result = $this->client->scheduledJobs()->sync(
+                applicationCode: $appCode,
+                jobs: $entries,
+                archiveUnlisted: $removeUnlisted,
+            );
+
+            return [
+                'created' => count($result['created'] ?? []),
+                'updated' => count($result['updated'] ?? []),
+                'deleted' => count($result['archived'] ?? []),
+            ];
+        } catch (\Exception $e) {
+            return [
+                'created' => 0,
+                'updated' => 0,
+                'deleted' => 0,
+                'error' => $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Publish a single OpenAPI document for an application. The platform
+     * short-circuits on `unchanged` and archives the prior version when it
+     * differs; we normalise the response into the standard
+     * `{created, updated, deleted}` shape (plus `version` for visibility).
+     *
+     * @param string $appCode Application code
+     * @param mixed $spec Parsed OpenAPI document (associative array or stdClass)
+     * @return array{created: int, updated: int, deleted: int, error?: string, version?: string}
+     */
+    private function syncOpenapi(string $appCode, mixed $spec): array
+    {
+        try {
+            $response = $this->client->request('POST', "/api/applications/{$appCode}/openapi/sync", [
+                'json' => ['spec' => $spec],
+            ]);
+
+            $unchanged = (bool) ($response['unchanged'] ?? false);
+            $archivedPriorVersion = $response['archivedPriorVersion'] ?? null;
+            $version = isset($response['version']) ? (string) $response['version'] : '';
+
+            $created = ($unchanged || $archivedPriorVersion !== null) ? 0 : 1;
+            $updated = $archivedPriorVersion !== null ? 1 : 0;
+
+            return [
+                'created' => $created,
+                'updated' => $updated,
+                'deleted' => 0,
+                'version' => $version,
             ];
         } catch (\Exception $e) {
             return [

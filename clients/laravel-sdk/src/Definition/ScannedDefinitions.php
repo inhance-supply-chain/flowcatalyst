@@ -15,6 +15,7 @@ final class ScannedDefinitions
      * @param array<array<string, mixed>> $subscriptions
      * @param array<array<string, mixed>> $dispatchPools
      * @param array<array<string, mixed>> $processes
+     * @param array<array<string, mixed>> $scheduledJobs
      */
     public function __construct(
         public readonly array $roles = [],
@@ -22,6 +23,7 @@ final class ScannedDefinitions
         public readonly array $subscriptions = [],
         public readonly array $dispatchPools = [],
         public readonly array $processes = [],
+        public readonly array $scheduledJobs = [],
     ) {}
 
     /**
@@ -33,7 +35,8 @@ final class ScannedDefinitions
             && empty($this->eventTypes)
             && empty($this->subscriptions)
             && empty($this->dispatchPools)
-            && empty($this->processes);
+            && empty($this->processes)
+            && empty($this->scheduledJobs);
     }
 
     /**
@@ -45,7 +48,8 @@ final class ScannedDefinitions
             + count($this->eventTypes)
             + count($this->subscriptions)
             + count($this->dispatchPools)
-            + count($this->processes);
+            + count($this->processes)
+            + count($this->scheduledJobs);
     }
 
     /**
@@ -61,6 +65,7 @@ final class ScannedDefinitions
             'subscriptions' => $this->subscriptions,
             'dispatchPools' => $this->dispatchPools,
             'processes' => $this->processes,
+            'scheduledJobs' => $this->scheduledJobs,
         ];
     }
 
@@ -77,6 +82,7 @@ final class ScannedDefinitions
             subscriptions: $data['subscriptions'] ?? [],
             dispatchPools: $data['dispatchPools'] ?? [],
             processes: $data['processes'] ?? [],
+            scheduledJobs: $data['scheduledJobs'] ?? [],
         );
     }
 }

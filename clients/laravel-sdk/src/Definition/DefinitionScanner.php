@@ -8,6 +8,7 @@ use FlowCatalyst\Attributes\AsDispatchPool;
 use FlowCatalyst\Attributes\AsEventType;
 use FlowCatalyst\Attributes\AsProcess;
 use FlowCatalyst\Attributes\AsRole;
+use FlowCatalyst\Attributes\AsScheduledJob;
 use FlowCatalyst\Attributes\AsSubscription;
 use Illuminate\Support\Facades\File;
 use ReflectionClass;
@@ -31,6 +32,7 @@ class DefinitionScanner
         $subscriptions = [];
         $dispatchPools = [];
         $processes = [];
+        $scheduledJobs = [];
 
         foreach ($paths as $path) {
             if (!File::isDirectory($path)) {
@@ -44,7 +46,7 @@ class DefinitionScanner
                 $classes = $this->getClassesFromFile($file->getRealPath());
 
                 foreach ($classes as $className) {
-                    $this->processClass($className, $roles, $eventTypes, $subscriptions, $dispatchPools, $processes);
+                    $this->processClass($className, $roles, $eventTypes, $subscriptions, $dispatchPools, $processes, $scheduledJobs);
                 }
             }
         }
@@ -54,7 +56,8 @@ class DefinitionScanner
             eventTypes: $eventTypes,
             subscriptions: $subscriptions,
             dispatchPools: $dispatchPools,
-            processes: $processes
+            processes: $processes,
+            scheduledJobs: $scheduledJobs,
         );
     }
 
@@ -99,6 +102,7 @@ class DefinitionScanner
      * @param array<array<string, mixed>> $subscriptions
      * @param array<array<string, mixed>> $dispatchPools
      * @param array<array<string, mixed>> $processes
+     * @param array<array<string, mixed>> $scheduledJobs
      */
     private function processClass(
         string $className,
@@ -106,7 +110,8 @@ class DefinitionScanner
         array &$eventTypes,
         array &$subscriptions,
         array &$dispatchPools,
-        array &$processes
+        array &$processes,
+        array &$scheduledJobs
     ): void {
         try {
             $reflection = new ReflectionClass($className);
@@ -160,6 +165,16 @@ class DefinitionScanner
             /** @var AsProcess $instance */
             $instance = $attribute->newInstance();
             $processes[] = array_merge($instance->toArray(), [
+                '_class' => $className,
+            ]);
+        }
+
+        // Check for AsScheduledJob attribute
+        $scheduledJobAttributes = $reflection->getAttributes(AsScheduledJob::class);
+        foreach ($scheduledJobAttributes as $attribute) {
+            /** @var AsScheduledJob $instance */
+            $instance = $attribute->newInstance();
+            $scheduledJobs[] = array_merge($instance->toArray(), [
                 '_class' => $className,
             ]);
         }

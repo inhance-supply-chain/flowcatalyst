@@ -79,6 +79,26 @@ class DefinitionRepository
     }
 
     /**
+     * Get all process (workflow documentation) definitions.
+     *
+     * @return array<array<string, mixed>>
+     */
+    public function processes(): array
+    {
+        return $this->all()->processes;
+    }
+
+    /**
+     * Get all scheduled-job definitions.
+     *
+     * @return array<array<string, mixed>>
+     */
+    public function scheduledJobs(): array
+    {
+        return $this->all()->scheduledJobs;
+    }
+
+    /**
      * Scan and cache definitions from the given paths.
      *
      * @param string[] $paths Directories to scan
