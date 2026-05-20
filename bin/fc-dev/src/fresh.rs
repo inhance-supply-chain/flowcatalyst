@@ -1,11 +1,20 @@
-//! `fc-dev fresh` — TRUNCATE every FlowCatalyst-owned table.
+//! `fc-dev fresh` — TRUNCATE every FlowCatalyst-owned table and re-seed
+//! the dev defaults.
 //!
 //! Wipes ALL data (principals, applications, clients, events, dispatch
 //! jobs, audit logs, OAuth tokens — everything). Preserves the schema
-//! (DDL) and `_schema_migrations` so the database is immediately usable
-//! again on next fc-dev startup. Built-in roles + the platform
-//! application + default processes are re-seeded automatically when
-//! fc-dev starts (those seeders are idempotent).
+//! (DDL) and `_schema_migrations`. After the truncate, re-seeds:
+//!
+//!   - built-in roles
+//!   - the `platform` application
+//!   - default processes
+//!   - a bootstrap admin user (`admin@flowcatalyst.local` /
+//!     `DevPassword123!` by default; override with `--admin-email` /
+//!     `--admin-password`)
+//!
+//! So `fc-dev fresh` followed by `fc-dev` lets you log in immediately
+//! with the documented dev credentials — no separate `fc-dev init` run
+//! required for the simple "I just want a usable local environment" case.
 //!
 //! Refuses to run without explicit confirmation. Intended for the local
 //! dev loop only — there is no "remote" mode.
@@ -52,6 +61,19 @@ pub struct FreshArgs {
     /// fresh is destructive and irreversible.
     #[arg(long)]
     pub yes: bool,
+
+    /// Email of the bootstrap admin to recreate after truncate. Defaults
+    /// to the documented dev value so `fc-dev fresh` produces a
+    /// known-good login.
+    #[arg(long, default_value = "admin@flowcatalyst.local")]
+    pub admin_email: String,
+
+    /// Password of the bootstrap admin. Defaults to the documented dev
+    /// value. Falls back to a relaxed complexity policy if the value
+    /// doesn't meet the strict one (matching `bootstrap_admin_user`'s
+    /// own fallback so the password you set is the password you can use).
+    #[arg(long, default_value = "DevPassword123!")]
+    pub admin_password: String,
 }
 
 pub async fn run(args: FreshArgs) -> Result<()> {
@@ -134,9 +156,38 @@ pub async fn run(args: FreshArgs) -> Result<()> {
         return Err(anyhow::anyhow!("TRUNCATE failed: {}", e));
     }
 
-    println!("\n✓ All FlowCatalyst tables truncated. Next steps:");
-    println!("  • Restart fc-dev (re-seeds built-in roles + platform app), or");
-    println!("  • Run `fc-dev init` to bootstrap an admin + application.");
+    // Re-seed the same way `fc-dev` does on startup, plus a bootstrap
+    // admin so the resulting DB is immediately usable.
+    info!("Re-seeding built-in roles, platform application, default processes, admin user");
+
+    fc_platform::shared::database::seed_builtin_roles(&pool)
+        .await
+        .context("seed built-in roles")?;
+    fc_platform::shared::database::seed_platform_application(&pool)
+        .await
+        .context("seed platform application")?;
+    fc_platform::shared::default_processes::seed_default_processes(&pool)
+        .await
+        .context("seed default processes")?;
+
+    // `bootstrap_admin_user` reads its config from env vars. Setting
+    // them here (only for this process) keeps the seeder's existing
+    // single source of truth without splitting the API in two.
+    std::env::set_var(
+        "FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL",
+        &args.admin_email,
+    );
+    std::env::set_var(
+        "FLOWCATALYST_BOOTSTRAP_ADMIN_PASSWORD",
+        &args.admin_password,
+    );
+    fc_platform::shared::bootstrap_admin::bootstrap_admin_user(&pool)
+        .await
+        .context("bootstrap admin user")?;
+
+    println!("\n✓ All FlowCatalyst tables truncated and re-seeded.");
+    println!("  Admin login:  {} / {}", args.admin_email, args.admin_password);
+    println!("  Start fc-dev and sign in at http://localhost:8080.");
 
     #[cfg(feature = "embedded-db")]
     if let Some(mut e) = _embedded {

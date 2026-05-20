@@ -745,12 +745,29 @@ async fn main() -> Result<()> {
             well_known_external_base_url: format!("http://localhost:{}", args.api_port),
             password_reset_external_base_url: format!("http://localhost:{}", args.api_port),
         },
-        platform_application_id,
+        platform_application_id.clone(),
     );
 
     // Event fan-out runs inside the stream processor (fc-stream) configured
     // above; nothing to start here.
-    let (platform_app, _openapi) = routes.build();
+    let (platform_app, platform_openapi) = routes.build();
+
+    // Dev-only auto-sync of the Developer portal artefacts. Idempotent —
+    // event-types sync writes only deltas, and OpenAPI sync no-ops when
+    // the spec hash matches CURRENT. Best-effort: failures warn but don't
+    // block fc-dev from serving.
+    if let Err(e) = auto_sync_developer_portal(
+        &pg_pool,
+        unit_of_work.clone(),
+        repos.event_type_repo.clone(),
+        repos.principal_repo.clone(),
+        platform_application_id.clone(),
+        serde_json::to_value(&platform_openapi).unwrap_or(serde_json::Value::Null),
+    )
+    .await
+    {
+        warn!(error = %e, "Developer-portal auto-sync skipped");
+    }
 
     // Dev-specific extra route states (the shared builder doesn't wire
     // /api/dispatch-jobs or /api/event-types/filters — fc-dev does
@@ -1021,3 +1038,106 @@ async fn embedded_spa_handler() -> impl axum::response::IntoResponse {
 }
 
 use axum::response::IntoResponse;
+
+/// Dev-only auto-sync of the Developer portal artefacts for the
+/// `platform` application. Mirrors the two BFF handlers
+/// (`POST /bff/event-types/sync-platform` and
+/// `POST /bff/developer/sync-platform-openapi`) but skips HTTP — we
+/// already have the use cases + the captured OpenAPI in scope at this
+/// point in startup.
+///
+/// Idempotent in both directions: event-types sync only writes deltas,
+/// and OpenAPI sync no-ops when the hash matches the CURRENT row. Safe
+/// to run on every `fc-dev` start.
+///
+/// Best-effort. Logs and returns Ok on per-step failure rather than
+/// aborting startup — these are dev affordances, not load-bearing.
+async fn auto_sync_developer_portal(
+    pg_pool: &sqlx::PgPool,
+    unit_of_work: Arc<PgUnitOfWork>,
+    event_type_repo: Arc<fc_platform::EventTypeRepository>,
+    principal_repo: Arc<fc_platform::PrincipalRepository>,
+    platform_application_id: String,
+    platform_openapi: serde_json::Value,
+) -> anyhow::Result<()> {
+    use fc_platform::application_openapi_spec::operations::{
+        SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase,
+    };
+    use fc_platform::application_openapi_spec::repository::OpenApiSpecRepository;
+    use fc_platform::event_type::operations::{SyncEventTypesCommand, SyncEventTypesUseCase};
+    use fc_platform::usecase::{ExecutionContext, UseCase, UseCaseResult};
+
+    // Attribute the sync to the seeded bootstrap admin so it has a real
+    // principal_id (and so audit logs / `synced_by` show a human, not a
+    // synthetic system actor). `synced_by` is VARCHAR(17) — a TSID id
+    // fits, an arbitrary string usually doesn't.
+    let admin_email = std::env::var("FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL")
+        .unwrap_or_else(|_| "admin@flowcatalyst.local".to_string());
+    let principal_id = match principal_repo.find_by_email(&admin_email).await {
+        Ok(Some(p)) => p.id,
+        Ok(None) => {
+            info!(
+                "Developer-portal auto-sync skipped: no admin principal yet \
+                 (run `fc-dev fresh` or set FLOWCATALYST_BOOTSTRAP_ADMIN_* env vars)."
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            warn!(error = %e, "Developer-portal auto-sync: principal lookup failed");
+            return Ok(());
+        }
+    };
+    let ctx = ExecutionContext::create(principal_id);
+
+    // ── Event types + schemas for the `platform` application ──────────
+    let definitions = fc_platform::seed::platform_event_types::definitions();
+    let event_types_total = definitions.len();
+    let cmd = SyncEventTypesCommand {
+        application_code: "platform".to_string(),
+        event_types: definitions,
+        remove_unlisted: false,
+    };
+    let sync_event_types = SyncEventTypesUseCase::new(event_type_repo, unit_of_work.clone());
+    match sync_event_types.run(cmd, ctx.clone()).await {
+        UseCaseResult::Success(event) => {
+            info!(
+                total = event_types_total,
+                created = event.created,
+                updated = event.updated,
+                deleted = event.deleted,
+                "Developer-portal auto-sync: platform event types"
+            );
+        }
+        UseCaseResult::Failure(err) => {
+            warn!(error = ?err, "Developer-portal auto-sync: platform event types failed");
+        }
+    }
+
+    // ── Platform's own OpenAPI document into the developer portal ─────
+    if !platform_openapi.is_object() {
+        warn!("Developer-portal auto-sync: OpenAPI spec is not a JSON object, skipping");
+        return Ok(());
+    }
+    let openapi_repo = Arc::new(OpenApiSpecRepository::new(pg_pool));
+    let sync_openapi = SyncOpenApiSpecUseCase::new(openapi_repo, unit_of_work);
+    let cmd = SyncOpenApiSpecCommand {
+        application_id: platform_application_id,
+        application_code: "platform".to_string(),
+        spec: platform_openapi,
+    };
+    match sync_openapi.run(cmd, ctx).await {
+        UseCaseResult::Success(event) => {
+            info!(
+                version = %event.version,
+                unchanged = event.unchanged,
+                has_breaking = event.has_breaking,
+                "Developer-portal auto-sync: platform OpenAPI"
+            );
+        }
+        UseCaseResult::Failure(err) => {
+            warn!(error = ?err, "Developer-portal auto-sync: platform OpenAPI failed");
+        }
+    }
+
+    Ok(())
+}
