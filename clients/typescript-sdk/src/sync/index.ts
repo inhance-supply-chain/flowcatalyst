@@ -35,6 +35,8 @@ export {
 	type SubscriptionMode,
 	type DispatchPoolDefinition,
 	type PrincipalDefinition,
+	type ProcessDefinition,
+	type ScheduledJobDefinition,
 } from "./definitions.js";
 
 export {

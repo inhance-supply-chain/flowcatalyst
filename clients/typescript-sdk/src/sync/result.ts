@@ -30,6 +30,15 @@ export interface SyncResult {
 	subscriptions: MaybeCategoryResult;
 	dispatchPools: MaybeCategoryResult;
 	principals: MaybeCategoryResult;
+	processes: MaybeCategoryResult;
+	scheduledJobs: MaybeCategoryResult;
+	/**
+	 * OpenAPI sync is a single-document upload. On success
+	 * `syncedCodes` carries `[version]`; `created`/`updated` reflect
+	 * whether the document was newly published or replaced an existing
+	 * one (both zero if byte-identical re-sync).
+	 */
+	openapi: MaybeCategoryResult;
 }
 
 /** Narrow a category result to the non-skipped case. */

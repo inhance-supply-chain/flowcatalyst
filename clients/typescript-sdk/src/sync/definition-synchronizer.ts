@@ -11,11 +11,13 @@ import type { FlowCatalystClient } from "../client.js";
 import type { SdkError } from "../errors.js";
 import type {
 	DefinitionSet,
+	DispatchPoolDefinition,
 	EventTypeDefinition,
 	PrincipalDefinition,
+	ProcessDefinition,
 	RoleDefinition,
+	ScheduledJobDefinition,
 	SubscriptionDefinition,
-	DispatchPoolDefinition,
 } from "./definitions.js";
 import type {
 	CategorySyncResult,
@@ -42,6 +44,10 @@ export interface SyncOptions {
 	skipSubscriptions?: boolean;
 	skipDispatchPools?: boolean;
 	skipPrincipals?: boolean;
+	skipProcesses?: boolean;
+	skipScheduledJobs?: boolean;
+	/** When true, skip publishing the OpenAPI doc even if the set has one. */
+	skipOpenapi?: boolean;
 }
 
 /**
@@ -109,6 +115,28 @@ export class DefinitionSynchronizer {
 							set.principals,
 							removeUnlisted,
 						);
+		const processesStep: () => ResultAsync<MaybeCategoryResult, SdkError> =
+			() =>
+				options.skipProcesses || !set.processes
+					? okAsync<MaybeCategoryResult>(SKIPPED)
+					: this.syncProcesses(
+							set.applicationCode,
+							set.processes,
+							removeUnlisted,
+						);
+		const scheduledJobsStep: () => ResultAsync<MaybeCategoryResult, SdkError> =
+			() =>
+				options.skipScheduledJobs || !set.scheduledJobs
+					? okAsync<MaybeCategoryResult>(SKIPPED)
+					: this.syncScheduledJobs(
+							set.applicationCode,
+							set.scheduledJobs,
+							removeUnlisted,
+						);
+		const openapiStep: () => ResultAsync<MaybeCategoryResult, SdkError> = () =>
+			options.skipOpenapi || set.openapiSpec === undefined
+				? okAsync<MaybeCategoryResult>(SKIPPED)
+				: this.syncOpenapi(set.applicationCode, set.openapiSpec);
 
 		return rolesStep()
 			.andThen((roles) =>
@@ -121,11 +149,20 @@ export class DefinitionSynchronizer {
 				poolsStep().map((dispatchPools) => ({ ...acc, dispatchPools })),
 			)
 			.andThen((acc) =>
-				principalsStep().map(
-					(principals): SyncResult => ({
+				principalsStep().map((principals) => ({ ...acc, principals })),
+			)
+			.andThen((acc) =>
+				processesStep().map((processes) => ({ ...acc, processes })),
+			)
+			.andThen((acc) =>
+				scheduledJobsStep().map((scheduledJobs) => ({ ...acc, scheduledJobs })),
+			)
+			.andThen((acc) =>
+				openapiStep().map(
+					(openapi): SyncResult => ({
 						applicationCode: set.applicationCode,
 						...acc,
-						principals,
+						openapi,
 					}),
 				),
 			);
@@ -209,6 +246,73 @@ export class DefinitionSynchronizer {
 			{ principals },
 			removeUnlisted,
 		);
+	}
+
+	private syncProcesses(
+		applicationCode: string,
+		processes: ProcessDefinition[],
+		removeUnlisted: boolean,
+	): ResultAsync<CategorySyncResult, SdkError> {
+		return this.post(
+			applicationCode,
+			"processes",
+			{ processes },
+			removeUnlisted,
+		);
+	}
+
+	private syncScheduledJobs(
+		applicationCode: string,
+		jobs: ScheduledJobDefinition[],
+		removeUnlisted: boolean,
+	): ResultAsync<CategorySyncResult, SdkError> {
+		// Scheduled-jobs sync is the one endpoint that uses `archiveUnlisted`
+		// in the body rather than `removeUnlisted` as a query param. Keep
+		// the SDK API consistent — caller passes `removeUnlisted`, we
+		// translate at the wire.
+		return this.client.request<CategorySyncResult>((httpClient, headers) =>
+			httpClient.post({
+				url: `/api/applications/${applicationCode}/scheduled-jobs/sync`,
+				headers: { ...headers, "Content-Type": "application/json" },
+				body: {
+					jobs,
+					archiveUnlisted: removeUnlisted,
+				},
+			}),
+		);
+	}
+
+	private syncOpenapi(
+		applicationCode: string,
+		spec: unknown,
+	): ResultAsync<CategorySyncResult, SdkError> {
+		// OpenAPI sync is one-shot — body is `{ spec }`, not a list.
+		// The platform's response has a different shape; we normalise to
+		// CategorySyncResult so callers can iterate uniformly.
+		return this.client
+			.request<{
+				applicationCode: string;
+				version: string;
+				archivedPriorVersion?: string;
+				unchanged: boolean;
+			}>((httpClient, headers) =>
+				httpClient.post({
+					url: `/api/applications/${applicationCode}/openapi/sync`,
+					headers: { ...headers, "Content-Type": "application/json" },
+					body: { spec },
+				}),
+			)
+			.map((r) => {
+				const created = r.unchanged || r.archivedPriorVersion ? 0 : 1;
+				const updated = r.archivedPriorVersion ? 1 : 0;
+				return {
+					applicationCode: r.applicationCode,
+					created,
+					updated,
+					deleted: 0,
+					syncedCodes: [r.version],
+				} satisfies CategorySyncResult;
+			});
 	}
 
 	// ── transport ─────────────────────────────────────────────────────
