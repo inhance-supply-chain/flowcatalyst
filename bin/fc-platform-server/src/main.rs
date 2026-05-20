@@ -32,7 +32,6 @@ use tracing::info;
 
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
-use fc_platform::seed::DevDataSeeder;
 use fc_platform::usecase::PgUnitOfWork;
 
 use fc_common::config::{env_or, env_or_parse};
@@ -91,16 +90,8 @@ async fn main() -> Result<()> {
     // Referential-integrity scan — warns about orphaned junction rows.
     fc_platform::shared::integrity_scan::run(&pg_pool).await;
 
-    // Seed development data if in dev mode
-    let dev_mode = std::env::var("FC_DEV_MODE")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
-    if dev_mode {
-        let seeder = DevDataSeeder::new(pg_pool.clone());
-        if let Err(e) = seeder.seed().await {
-            tracing::warn!("Dev data seeding skipped (data may already exist): {}", e);
-        }
-    }
+    // Dev-mode auto-seeding of users/clients/applications was removed —
+    // use `fc-dev init` to bootstrap an admin + application interactively.
 
     // Initialize repositories
     let repos = Repositories::new(&pg_pool);

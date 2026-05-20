@@ -72,6 +72,18 @@ enum Command {
     /// subcommand — kept for discoverability.
     Start(RunArgs),
 
+    /// Bootstrap a fresh application on this local fc-dev:
+    /// admin user (if none exists), Default Client, Application,
+    /// Service Account, OAuth client, and a `.env` written to the
+    /// project root. Replaces the per-SDK init commands.
+    Init(init::InitArgs),
+
+    /// Truncate every FlowCatalyst table in the database (preserves the
+    /// schema + the migration tracker). Used to start over without
+    /// reinstalling or re-migrating. Refuses to run without explicit
+    /// confirmation.
+    Fresh(fresh::FreshArgs),
+
     /// Run the FlowCatalyst MCP server (read-only access to event types
     /// and subscriptions for AI agents).
     ///
@@ -280,6 +292,8 @@ mod embedded_pg {
 }
 
 mod banner;
+mod fresh;
+mod init;
 mod mcp_bootstrap;
 mod upgrade;
 mod version_check;
@@ -311,6 +325,14 @@ async fn main() -> Result<()> {
             } else {
                 fc_mcp::run_stdio(config).await
             };
+        }
+        Some(Command::Init(args)) => {
+            fc_common::logging::init_logging("fc-dev init");
+            return init::run(args).await;
+        }
+        Some(Command::Fresh(args)) => {
+            fc_common::logging::init_logging("fc-dev fresh");
+            return fresh::run(args).await;
         }
         _ => {}
     }
@@ -507,11 +529,10 @@ async fn main() -> Result<()> {
     // 8. Setup platform services and APIs
     info!("Initializing platform services...");
 
-    // Seed development data (the pool + migrations were set up in step 1).
-    let seeder = fc_platform::seed::DevDataSeeder::new(pg_pool.clone());
-    if let Err(e) = seeder.seed().await {
-        tracing::warn!("Dev data seeding skipped (data may already exist): {}", e);
-    }
+    // No auto-seeded dev data — use `fc-dev init` to bootstrap an
+    // admin + application + service account interactively. Built-in
+    // roles + platform application + default processes are seeded
+    // unconditionally in step 1 above.
 
     // 8c. Initialize all repositories
     let repos = Repositories::new(&pg_pool);

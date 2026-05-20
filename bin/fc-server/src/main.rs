@@ -53,7 +53,6 @@ use tracing::{error, info, warn};
 
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
-use fc_platform::seed::DevDataSeeder;
 use fc_platform::usecase::PgUnitOfWork;
 
 use fc_common::config::{
@@ -215,13 +214,10 @@ async fn main() -> Result<()> {
     // Referential-integrity scan — warns about orphaned junction rows.
     fc_platform::shared::integrity_scan::run(&pg_pool).await;
 
-    // Dev mode seeding
-    if env_bool("FC_DEV_MODE", false) {
-        let seeder = DevDataSeeder::new(pg_pool.clone());
-        if let Err(e) = seeder.seed().await {
-            warn!("Dev data seeding skipped: {}", e);
-        }
-    }
+    // Bootstrap of users / clients / applications / service accounts is
+    // owned by `fc-dev init`. fc-server is the production binary path —
+    // it relies on bootstrap_admin (env-driven) above for the first
+    // admin and operators take it from there via the platform UI / API.
 
     // ── DB credential refresh (AWS Secrets Manager rotation) ─────────────────
     // When credentials come from a secret provider, poll it on an interval and

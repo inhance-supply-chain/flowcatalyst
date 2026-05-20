@@ -68,6 +68,12 @@ self_update = { version = "0.41", default-features = false, features = ["rustls"
 semver = "1"
 # Startup version check: serde_json already in deps; chrono used for cache TTL.
 chrono = { workspace = true }
+# `fc-dev init` mints a CONFIDENTIAL OAuth client secret — 32 random bytes
+# base64-encoded then encrypted via fc-platform's EncryptionService. These
+# two crates are the only callers; the rest of fc-dev's secret material
+# comes from fc-platform's password service.
+rand = { workspace = true }
+base64 = { version = "0.22" }
 
 [features]
 default = ["embedded-db"]
