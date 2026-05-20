@@ -2,6 +2,24 @@
 
 The outbox processor lives on the **consumer-application side**, not inside the FlowCatalyst platform. Its job is to read messages that an application has written to its own outbox table (in the same transaction as its business write) and forward them to the platform's HTTP API. Source: `crates/fc-outbox/`, binary `bin/fc-outbox-processor/`, also embeddable in `fc-server` for self-contained deployments.
 
+In local development, the same processor is also reachable as a
+subcommand of `fc-dev`:
+
+- **Embedded in `fc-dev`** — set `FC_OUTBOX_ENABLED=true` and the
+  processor runs in-process alongside the platform. Suitable when the
+  app's outbox table lives in fc-dev's embedded Postgres (i.e. the app
+  shares the platform DB).
+- **Standalone via `fc-dev outbox poll`** — runs only the processor (no
+  platform, no embedded PG), pointed at an external app database via
+  `--db-url` and forwarding to a platform via `--api-url` + `--token`.
+  This is the path for apps that can't share fc-dev's embedded Postgres
+  (e.g. a PostGIS-dependent app in Docker). See
+  [../developers/fc-dev.md#fc-dev-outbox-poll](../developers/fc-dev.md#fc-dev-outbox-poll--standalone-outbox-poller).
+
+Both modes use the same `EnhancedOutboxProcessor` described below; the
+only difference is what process owns it and how the connection / token
+are sourced.
+
 The pattern is the standard transactional outbox: an application that wants to emit a FlowCatalyst event writes a business row and an outbox row inside the same database transaction, then trusts a background process to deliver the outbox row eventually. This trades immediate delivery for crash-safety — the message is durable before any HTTP call is attempted.
 
 ---

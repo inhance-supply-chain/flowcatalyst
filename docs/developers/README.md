@@ -9,11 +9,13 @@ For platform deployment (provisioning, secrets, HA) see [../operations/](../oper
 | If you're… | Read |
 |---|---|
 | New to FlowCatalyst | [quickstart.md](quickstart.md) — fc-dev in 5 minutes |
+| Looking up an `fc-dev` flag or subcommand | [fc-dev.md](fc-dev.md) — complete CLI reference |
 | Trying to understand the model | [concepts.md](concepts.md) — events, subscriptions, pools, dispatch modes |
 | Publishing events from an application | [publishing-events.md](publishing-events.md) — outbox pattern, batch API, SDK sync |
 | Building a webhook receiver | [receiving-webhooks.md](receiving-webhooks.md) — request shape, HMAC, ack/nack |
 | Wiring events to webhooks | [subscriptions-and-pools.md](subscriptions-and-pools.md) — patterns, dispatch modes, pool sizing |
 | Doing scheduled / cron work | [scheduled-jobs.md](scheduled-jobs.md) — EVENT vs WEBHOOK modes |
+| Running an app with PostGIS / external Postgres | [fc-dev.md#recipe-app-with-postgis](fc-dev.md#recipe-app-with-postgis-or-any-other-extension-fc-dev-cant-bundle) — `fc-dev outbox poll` sidecar |
 | Diagnosing problems | [debugging.md](debugging.md) — by symptom |
 
 ## SDK references

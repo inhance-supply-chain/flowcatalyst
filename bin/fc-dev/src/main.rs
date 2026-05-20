@@ -91,6 +91,12 @@ enum Command {
     /// `FLOWCATALYST_CLIENT_SECRET` from the environment.
     Mcp(McpArgs),
 
+    /// Standalone outbox poller. Polls an external app's
+    /// `outbox_messages` Postgres table and forwards to a FlowCatalyst
+    /// platform API. Use when the app's database can't be the embedded
+    /// one (e.g. PostGIS in Docker).
+    Outbox(outbox::OutboxArgs),
+
     /// Download the latest fc-dev release and replace this binary.
     Upgrade(UpgradeArgs),
 }
@@ -295,6 +301,7 @@ mod banner;
 mod fresh;
 mod init;
 mod mcp_bootstrap;
+mod outbox;
 mod upgrade;
 mod version_check;
 
@@ -333,6 +340,11 @@ async fn main() -> Result<()> {
         Some(Command::Fresh(args)) => {
             fc_common::logging::init_logging("fc-dev fresh");
             return fresh::run(args).await;
+        }
+        Some(Command::Outbox(args)) => {
+            let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
+            fc_common::logging::init_logging("fc-dev outbox");
+            return outbox::run(args).await;
         }
         _ => {}
     }

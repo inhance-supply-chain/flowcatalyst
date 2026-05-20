@@ -43,7 +43,10 @@ fc-dev
 # 3. Open http://localhost:8080
 ```
 
-Then read [`docs/developers/quickstart.md`](docs/developers/quickstart.md).
+Next steps:
+
+- [`docs/developers/quickstart.md`](docs/developers/quickstart.md) — five-minute end-to-end walkthrough.
+- [`docs/developers/fc-dev.md`](docs/developers/fc-dev.md) — complete CLI reference: every subcommand (`start`, `init`, `fresh`, `outbox poll`, `mcp`, `upgrade`), every flag, every env var, recipes for external Postgres / PostGIS workflows, plus the rationale for the `fc-dev` name.
 
 ### As an operator deploying production
 
@@ -62,6 +65,7 @@ Organised by audience:
 ### Developers (building on the platform)
 
 - [Quickstart](docs/developers/quickstart.md) — fc-dev in 5 minutes
+- [fc-dev CLI reference](docs/developers/fc-dev.md) — every subcommand, every flag, the PostGIS / external-Postgres recipe, naming rationale
 - [Concepts](docs/developers/concepts.md) — events, subscriptions, pools, dispatch modes
 - [Publishing events](docs/developers/publishing-events.md) — outbox pattern, batch API, SDK sync
 - [Receiving webhooks](docs/developers/receiving-webhooks.md) — HMAC, ack/nack contract, retries
@@ -107,7 +111,7 @@ Organised by audience:
 | `fc-router` | Standalone SQS consumer + webhook delivery |
 | `fc-stream-processor` | Projections, fan-out, partition manager |
 | `fc-outbox-processor` | Application-side outbox dispatcher (sidecar) |
-| `fc-dev` | Local development monolith with embedded PG + SQLite queue |
+| `fc-dev` | Local development monolith with embedded PG + SQLite queue; also bundles `init`, `fresh`, `mcp`, and `outbox poll` subcommands — see [`docs/developers/fc-dev.md`](docs/developers/fc-dev.md) |
 | `fc-mcp-server` | Read-only MCP server for LLM clients |
 
 See [`docs/operations/topologies.md`](docs/operations/topologies.md) for which to deploy in which topology.

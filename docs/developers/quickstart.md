@@ -189,11 +189,22 @@ fc-dev
 # Pick a port (default 8080)
 FC_API_PORT=3000 fc-dev
 
-# Wipe the embedded PG data and start fresh
+# Bootstrap a fresh app (admin + client + application + service account + .env)
+fc-dev init
+
+# TRUNCATE every FC table (keeps schema; built-in roles re-seed on next start)
+fc-dev fresh
+
+# Wipe the entire embedded PG data dir and start over
 fc-dev --reset-db
 
 # Connect to an existing Postgres instead of the embedded one
 fc-dev --embedded-db=false --database-url postgresql://localhost:5432/flowcatalyst
+
+# Sidecar an external app's outbox (e.g. PostGIS in Docker) into a local fc-dev
+fc-dev outbox poll \
+  --db-url postgres://user:pass@localhost:5433/myapp \
+  --token "$FC_SERVICE_TOKEN"
 
 # Run the MCP server (read-only access for LLM clients)
 fc-dev mcp           # stdio
@@ -203,6 +214,9 @@ fc-dev mcp --http    # HTTP server on :3100
 fc-dev upgrade           # download and install if newer
 fc-dev upgrade --check   # just check
 ```
+
+Full reference (every subcommand, every flag, every env var):
+**[fc-dev.md](fc-dev.md)**.
 
 ---
 
