@@ -9,6 +9,7 @@ use FlowCatalyst\Auth\DefaultOidcUserHandler;
 use FlowCatalyst\Client\Auth\OidcTokenManager;
 use FlowCatalyst\Client\Auth\TokenProviderInterface;
 use FlowCatalyst\Client\FlowCatalystClient;
+use FlowCatalyst\Console\Commands\InitCommand;
 use FlowCatalyst\Console\Commands\ScanDefinitionsCommand;
 use FlowCatalyst\Console\Commands\SyncDefinitionsCommand;
 use FlowCatalyst\Definition\DefinitionRepository;
@@ -228,6 +229,7 @@ class FlowCatalystServiceProvider extends ServiceProvider
     {
         if ($this->app->runningInConsole()) {
             $this->commands([
+                InitCommand::class,
                 ScanDefinitionsCommand::class,
                 SyncDefinitionsCommand::class,
             ]);
