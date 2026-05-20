@@ -52,13 +52,18 @@ pub struct SyncResult {
     pub dispatch_pools: Option<CategorySyncResult>,
     pub principals: Option<CategorySyncResult>,
     pub processes: Option<CategorySyncResult>,
+    pub scheduled_jobs: Option<CategorySyncResult>,
+    /// OpenAPI sync is a single-spec upload, not a per-row list — the
+    /// `synced_codes` field always contains exactly the publish-version
+    /// string on success.
+    pub openapi: Option<CategorySyncResult>,
 }
 
 impl SyncResult {
     /// Stable category iteration order matching the orchestrator's call
     /// sequence — roles → event_types → subscriptions → dispatch_pools →
-    /// principals → processes.
-    fn categories(&self) -> [(&'static str, Option<&CategorySyncResult>); 6] {
+    /// principals → processes → scheduled_jobs → openapi.
+    fn categories(&self) -> [(&'static str, Option<&CategorySyncResult>); 8] {
         [
             ("roles", self.roles.as_ref()),
             ("eventTypes", self.event_types.as_ref()),
@@ -66,6 +71,8 @@ impl SyncResult {
             ("dispatchPools", self.dispatch_pools.as_ref()),
             ("principals", self.principals.as_ref()),
             ("processes", self.processes.as_ref()),
+            ("scheduledJobs", self.scheduled_jobs.as_ref()),
+            ("openapi", self.openapi.as_ref()),
         ]
     }
 

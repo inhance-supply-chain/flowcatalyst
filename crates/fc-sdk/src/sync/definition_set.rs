@@ -10,7 +10,7 @@
 
 use super::definitions::{
     DispatchPoolDefinition, EventTypeDefinition, PrincipalDefinition, ProcessDefinition,
-    RoleDefinition, SubscriptionDefinition,
+    RoleDefinition, ScheduledJobDefinition, SubscriptionDefinition,
 };
 
 /// Container for all definitions belonging to one application.
@@ -27,6 +27,12 @@ pub struct DefinitionSet {
     pub dispatch_pools: Vec<DispatchPoolDefinition>,
     pub principals: Vec<PrincipalDefinition>,
     pub processes: Vec<ProcessDefinition>,
+    pub scheduled_jobs: Vec<ScheduledJobDefinition>,
+    /// OpenAPI document for this application, as parsed JSON. Optional —
+    /// only included if the consumer wants to publish their REST surface
+    /// to the platform's catalogue. Per-application: a fresh sync
+    /// replaces the previous version.
+    pub openapi_spec: Option<serde_json::Value>,
 }
 
 impl DefinitionSet {
@@ -98,6 +104,23 @@ impl DefinitionSet {
         self
     }
 
+    pub fn with_scheduled_jobs(mut self, scheduled_jobs: Vec<ScheduledJobDefinition>) -> Self {
+        self.scheduled_jobs = scheduled_jobs;
+        self
+    }
+
+    pub fn add_scheduled_job(mut self, scheduled_job: ScheduledJobDefinition) -> Self {
+        self.scheduled_jobs.push(scheduled_job);
+        self
+    }
+
+    /// Attach an OpenAPI document (parsed JSON) to be published alongside
+    /// the rest of the application's definitions on next sync.
+    pub fn with_openapi_spec(mut self, spec: serde_json::Value) -> Self {
+        self.openapi_spec = Some(spec);
+        self
+    }
+
     pub fn has_roles(&self) -> bool {
         !self.roles.is_empty()
     }
@@ -122,6 +145,14 @@ impl DefinitionSet {
         !self.processes.is_empty()
     }
 
+    pub fn has_scheduled_jobs(&self) -> bool {
+        !self.scheduled_jobs.is_empty()
+    }
+
+    pub fn has_openapi_spec(&self) -> bool {
+        self.openapi_spec.is_some()
+    }
+
     pub fn is_empty(&self) -> bool {
         !self.has_roles()
             && !self.has_event_types()
@@ -129,6 +160,8 @@ impl DefinitionSet {
             && !self.has_dispatch_pools()
             && !self.has_principals()
             && !self.has_processes()
+            && !self.has_scheduled_jobs()
+            && !self.has_openapi_spec()
     }
 }
 

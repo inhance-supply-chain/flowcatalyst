@@ -25,6 +25,7 @@ pub mod connections;
 pub mod dispatch_pools;
 pub mod event_types;
 pub mod me;
+pub mod openapi;
 pub mod permissions;
 pub mod principals;
 pub mod processes;
@@ -57,6 +58,7 @@ pub use connections::*;
 pub use dispatch_pools::*;
 pub use event_types::*;
 pub use me::*;
+pub use openapi::*;
 pub use permissions::*;
 pub use principals::*;
 pub use processes::*;
@@ -164,6 +166,11 @@ impl FlowCatalystClient {
     /// Process documentation — `/api/processes/*`.
     pub fn processes(&self) -> processes::Processes<'_> {
         processes::Processes { client: self }
+    }
+
+    /// OpenAPI specs — `/api/applications/{appCode}/openapi/sync`.
+    pub fn openapi(&self) -> openapi::OpenApi<'_> {
+        openapi::OpenApi { client: self }
     }
 
     /// Roles — `/api/roles/*`.

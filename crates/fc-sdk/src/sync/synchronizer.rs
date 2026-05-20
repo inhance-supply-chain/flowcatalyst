@@ -26,10 +26,11 @@
 use super::definition_set::DefinitionSet;
 use super::definitions::{
     DispatchPoolDefinition, EventTypeDefinition, PrincipalDefinition, ProcessDefinition,
-    RoleDefinition, SubscriptionDefinition,
+    RoleDefinition, ScheduledJobDefinition, SubscriptionDefinition,
 };
 use super::options::SyncOptions;
 use super::result::{CategorySyncResult, SyncResult};
+use crate::client::scheduled_jobs::SyncScheduledJobsRequest;
 use crate::client::{
     ClientError, FlowCatalystClient, SyncDispatchPoolsRequest, SyncEventTypesRequest,
     SyncPrincipalsRequest, SyncResult as WireSyncResult, SyncRolesRequest, SyncSubscriptionsRequest,
@@ -92,6 +93,17 @@ impl DefinitionSynchronizer {
                 self.run_processes(app, &set.processes, options.remove_unlisted)
                     .await,
             );
+        }
+        if options.sync_scheduled_jobs && set.has_scheduled_jobs() {
+            out.scheduled_jobs = Some(
+                self.run_scheduled_jobs(app, &set.scheduled_jobs, options.remove_unlisted)
+                    .await,
+            );
+        }
+        if options.sync_openapi {
+            if let Some(spec) = set.openapi_spec.clone() {
+                out.openapi = Some(self.run_openapi(app, spec).await);
+            }
         }
 
         out
@@ -246,6 +258,71 @@ impl DefinitionSynchronizer {
             Err(e) => CategorySyncResult::from_error(format_error(e)),
         }
     }
+
+    async fn run_scheduled_jobs(
+        &self,
+        app: &str,
+        jobs: &[ScheduledJobDefinition],
+        archive_unlisted: bool,
+    ) -> CategorySyncResult {
+        let req = SyncScheduledJobsRequest {
+            client_id: None,
+            jobs: jobs
+                .iter()
+                .cloned()
+                .map(ScheduledJobDefinition::into_wire)
+                .collect(),
+            archive_unlisted,
+        };
+        match self.client.scheduled_jobs().sync(app, &req).await {
+            Ok(r) => CategorySyncResult {
+                // The scheduled-jobs endpoint returns per-code vectors
+                // rather than counts. Normalise to the same shape as
+                // every other category by counting the vectors.
+                created: r.created.len() as u32,
+                updated: r.updated.len() as u32,
+                deleted: r.archived.len() as u32,
+                synced_codes: r
+                    .created
+                    .iter()
+                    .chain(r.updated.iter())
+                    .chain(r.archived.iter())
+                    .cloned()
+                    .collect(),
+                error: None,
+            },
+            Err(e) => CategorySyncResult::from_error(format_error(e)),
+        }
+    }
+
+    async fn run_openapi(
+        &self,
+        app: &str,
+        spec: serde_json::Value,
+    ) -> CategorySyncResult {
+        match self.client.openapi().sync(app, spec).await {
+            Ok(r) => {
+                // OpenAPI sync is one-shot: report 1 row created/updated
+                // (depending on whether content changed) and pass back
+                // the published version in `synced_codes`.
+                let (created, updated) = if r.unchanged {
+                    (0, 0)
+                } else if r.archived_prior_version.is_some() {
+                    (0, 1)
+                } else {
+                    (1, 0)
+                };
+                CategorySyncResult {
+                    created,
+                    updated,
+                    deleted: 0,
+                    synced_codes: vec![r.version],
+                    error: None,
+                }
+            }
+            Err(e) => CategorySyncResult::from_error(format_error(e)),
+        }
+    }
 }
 
 fn from_wire(r: WireSyncResult) -> CategorySyncResult {
@@ -292,6 +369,8 @@ mod tests {
         assert!(result.dispatch_pools.is_none());
         assert!(result.principals.is_none());
         assert!(result.processes.is_none());
+        assert!(result.scheduled_jobs.is_none());
+        assert!(result.openapi.is_none());
         assert!(!result.has_changes());
         assert!(!result.has_errors());
     }

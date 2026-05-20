@@ -8,6 +8,7 @@
 //! be assembled inline at the call site.
 
 use crate::client::processes::SyncProcessInput;
+use crate::client::scheduled_jobs::SyncScheduledJobItem;
 use crate::client::sync::{
     SyncDispatchPoolItem, SyncEventTypeBinding, SyncPrincipalItem, SyncRoleItem,
     SyncSubscriptionItem,
@@ -388,6 +389,114 @@ impl ProcessDefinition {
             body: self.body,
             diagram_type: self.diagram_type,
             tags: self.tags,
+        }
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Scheduled Job
+// ───────────────────────────────────────────────────────────────────────────
+
+/// A scheduled-job declaration.
+///
+/// `code` is the full identifier the platform uses (the per-application
+/// convention is `{app}:{job-name}`, but the SDK doesn't enforce a shape).
+/// `crons` accepts standard 5-field cron expressions; the platform's
+/// scheduler evaluates them in `timezone` (defaults to UTC).
+#[derive(Debug, Clone, Default)]
+pub struct ScheduledJobDefinition {
+    pub code: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub crons: Vec<String>,
+    pub timezone: Option<String>,
+    pub payload: Option<serde_json::Value>,
+    /// `true` lets the platform fire a new tick even when the previous
+    /// invocation is still running. Default `false` — see the SDK's
+    /// `LockProvider` for in-app de-dupe of concurrent fires.
+    pub concurrent: bool,
+    /// `true` if the consumer reports back via
+    /// `POST /api/scheduled-jobs/instances/{id}/complete`. The platform
+    /// then tracks per-instance completion status instead of treating
+    /// the webhook delivery as the success signal.
+    pub tracks_completion: bool,
+    pub timeout_seconds: Option<i32>,
+    pub delivery_max_attempts: Option<i32>,
+    pub target_url: Option<String>,
+}
+
+impl ScheduledJobDefinition {
+    pub fn make(code: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            name: name.into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn with_crons(mut self, crons: Vec<String>) -> Self {
+        self.crons = crons;
+        self
+    }
+
+    pub fn add_cron(mut self, cron: impl Into<String>) -> Self {
+        self.crons.push(cron.into());
+        self
+    }
+
+    pub fn with_timezone(mut self, timezone: impl Into<String>) -> Self {
+        self.timezone = Some(timezone.into());
+        self
+    }
+
+    pub fn with_payload(mut self, payload: serde_json::Value) -> Self {
+        self.payload = Some(payload);
+        self
+    }
+
+    pub fn with_concurrent(mut self, concurrent: bool) -> Self {
+        self.concurrent = concurrent;
+        self
+    }
+
+    pub fn with_tracks_completion(mut self, tracks_completion: bool) -> Self {
+        self.tracks_completion = tracks_completion;
+        self
+    }
+
+    pub fn with_timeout_seconds(mut self, timeout_seconds: i32) -> Self {
+        self.timeout_seconds = Some(timeout_seconds);
+        self
+    }
+
+    pub fn with_delivery_max_attempts(mut self, attempts: i32) -> Self {
+        self.delivery_max_attempts = Some(attempts);
+        self
+    }
+
+    pub fn with_target_url(mut self, target_url: impl Into<String>) -> Self {
+        self.target_url = Some(target_url.into());
+        self
+    }
+
+    pub(crate) fn into_wire(self) -> SyncScheduledJobItem {
+        SyncScheduledJobItem {
+            code: self.code,
+            name: self.name,
+            description: self.description,
+            crons: self.crons,
+            timezone: self.timezone,
+            payload: self.payload,
+            concurrent: self.concurrent,
+            tracks_completion: self.tracks_completion,
+            timeout_seconds: self.timeout_seconds,
+            delivery_max_attempts: self.delivery_max_attempts,
+            target_url: self.target_url,
         }
     }
 }

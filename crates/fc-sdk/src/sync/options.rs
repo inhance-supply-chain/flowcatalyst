@@ -25,6 +25,8 @@ pub struct SyncOptions {
     pub sync_dispatch_pools: bool,
     pub sync_principals: bool,
     pub sync_processes: bool,
+    pub sync_scheduled_jobs: bool,
+    pub sync_openapi: bool,
 }
 
 impl Default for SyncOptions {
@@ -44,6 +46,24 @@ impl SyncOptions {
             sync_dispatch_pools: true,
             sync_principals: true,
             sync_processes: true,
+            sync_scheduled_jobs: true,
+            sync_openapi: true,
+        }
+    }
+
+    /// Disable every category. Use as the starting point for selectively
+    /// enabling just one or two via `..SyncOptions::none()` spread.
+    pub const fn none() -> Self {
+        Self {
+            remove_unlisted: false,
+            sync_roles: false,
+            sync_event_types: false,
+            sync_subscriptions: false,
+            sync_dispatch_pools: false,
+            sync_principals: false,
+            sync_processes: false,
+            sync_scheduled_jobs: false,
+            sync_openapi: false,
         }
     }
 
@@ -62,75 +82,35 @@ impl SyncOptions {
     }
 
     pub const fn roles_only() -> Self {
-        Self {
-            remove_unlisted: false,
-            sync_roles: true,
-            sync_event_types: false,
-            sync_subscriptions: false,
-            sync_dispatch_pools: false,
-            sync_principals: false,
-            sync_processes: false,
-        }
+        Self { sync_roles: true, ..Self::none() }
     }
 
     pub const fn event_types_only() -> Self {
-        Self {
-            remove_unlisted: false,
-            sync_roles: false,
-            sync_event_types: true,
-            sync_subscriptions: false,
-            sync_dispatch_pools: false,
-            sync_principals: false,
-            sync_processes: false,
-        }
+        Self { sync_event_types: true, ..Self::none() }
     }
 
     pub const fn subscriptions_only() -> Self {
-        Self {
-            remove_unlisted: false,
-            sync_roles: false,
-            sync_event_types: false,
-            sync_subscriptions: true,
-            sync_dispatch_pools: false,
-            sync_principals: false,
-            sync_processes: false,
-        }
+        Self { sync_subscriptions: true, ..Self::none() }
     }
 
     pub const fn dispatch_pools_only() -> Self {
-        Self {
-            remove_unlisted: false,
-            sync_roles: false,
-            sync_event_types: false,
-            sync_subscriptions: false,
-            sync_dispatch_pools: true,
-            sync_principals: false,
-            sync_processes: false,
-        }
+        Self { sync_dispatch_pools: true, ..Self::none() }
     }
 
     pub const fn principals_only() -> Self {
-        Self {
-            remove_unlisted: false,
-            sync_roles: false,
-            sync_event_types: false,
-            sync_subscriptions: false,
-            sync_dispatch_pools: false,
-            sync_principals: true,
-            sync_processes: false,
-        }
+        Self { sync_principals: true, ..Self::none() }
     }
 
     pub const fn processes_only() -> Self {
-        Self {
-            remove_unlisted: false,
-            sync_roles: false,
-            sync_event_types: false,
-            sync_subscriptions: false,
-            sync_dispatch_pools: false,
-            sync_principals: false,
-            sync_processes: true,
-        }
+        Self { sync_processes: true, ..Self::none() }
+    }
+
+    pub const fn scheduled_jobs_only() -> Self {
+        Self { sync_scheduled_jobs: true, ..Self::none() }
+    }
+
+    pub const fn openapi_only() -> Self {
+        Self { sync_openapi: true, ..Self::none() }
     }
 }
 
@@ -148,6 +128,8 @@ mod tests {
         assert!(opts.sync_dispatch_pools);
         assert!(opts.sync_principals);
         assert!(opts.sync_processes);
+        assert!(opts.sync_scheduled_jobs);
+        assert!(opts.sync_openapi);
     }
 
     #[test]
@@ -159,9 +141,15 @@ mod tests {
         assert!(!opts.sync_dispatch_pools);
         assert!(!opts.sync_principals);
         assert!(!opts.sync_processes);
+        assert!(!opts.sync_scheduled_jobs);
+        assert!(!opts.sync_openapi);
 
-        let opts = SyncOptions::processes_only();
-        assert!(opts.sync_processes);
+        let opts = SyncOptions::scheduled_jobs_only();
+        assert!(opts.sync_scheduled_jobs);
+        assert!(!opts.sync_roles);
+
+        let opts = SyncOptions::openapi_only();
+        assert!(opts.sync_openapi);
         assert!(!opts.sync_roles);
     }
 
