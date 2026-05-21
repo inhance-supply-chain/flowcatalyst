@@ -526,6 +526,28 @@ impl crate::usecase::Persist<ServiceAccount> for ServiceAccountRepository {
     }
 
     async fn delete(&self, sa: &ServiceAccount, tx: &mut crate::usecase::DbTx<'_>) -> Result<()> {
+        // Delete any OAuth client wired to this service account principal.
+        // Migration 027 adds an FK with ON DELETE CASCADE, which would
+        // make this row-level delete redundant — but we keep it here as
+        // defense-in-depth for installs that haven't migrated yet and so
+        // the order of deletes is explicit in the use-case path.
+        // `oauth_clients`'s junction tables (redirect_uris, allowed_origins,
+        // grant_types, application_ids) already cascade from oauth_clients.id.
+        sqlx::query("DELETE FROM oauth_clients WHERE service_account_principal_id = $1")
+            .bind(&sa.id)
+            .execute(&mut **tx.inner)
+            .await?;
+        // Clear any application pointer at this SA. Without this, the
+        // application keeps `service_account_id` set to a dead principal
+        // and the provision-service-account handler refuses to mint a
+        // replacement with "already has a service account provisioned".
+        // Migration 028 adds an `ON DELETE SET NULL` FK so the DB does
+        // this automatically; the explicit UPDATE here is defense in
+        // depth for pre-migration installs.
+        sqlx::query("UPDATE app_applications SET service_account_id = NULL WHERE service_account_id = $1")
+            .bind(&sa.id)
+            .execute(&mut **tx.inner)
+            .await?;
         if let Some(ref sa_id) = sa.service_account_table_id {
             sqlx::query("DELETE FROM iam_service_accounts WHERE id = $1")
                 .bind(sa_id)

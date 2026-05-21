@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 use crate::application::client_config_repository::ApplicationClientConfigRepository;
 use crate::application::repository::ApplicationRepository;
 use crate::client::repository::ClientRepository;
+use crate::principal::repository::PrincipalRepository;
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 
@@ -59,6 +60,28 @@ pub struct MeState {
     pub client_repo: Arc<ClientRepository>,
     pub application_repo: Arc<ApplicationRepository>,
     pub app_client_config_repo: Arc<ApplicationClientConfigRepository>,
+    /// Used to resolve the caller's application-access list, which the
+    /// JWT-derived `AuthContext` does not carry.
+    pub principal_repo: Arc<PrincipalRepository>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WhoamiResponse {
+    pub principal_id: String,
+    /// "USER" or "SERVICE".
+    pub principal_type: String,
+    /// "ANCHOR", "TENANT", "SERVICE", etc.
+    pub scope: String,
+    pub name: String,
+    pub email: Option<String>,
+    pub active: bool,
+    /// Role codes assigned to this principal (resolved at request time).
+    pub roles: Vec<String>,
+    /// Client IDs this principal can act inside.
+    pub accessible_client_ids: Vec<String>,
+    /// Application IDs this principal can act against.
+    pub accessible_application_ids: Vec<String>,
 }
 
 /// List clients accessible to the authenticated user
@@ -207,8 +230,106 @@ async fn list_my_client_applications(
     }))
 }
 
+/// Return the calling principal's id, type, scope, roles, and accessible
+/// clients/applications. The canonical "who am I" lookup used by agents,
+/// SDKs, and the UI.
+#[utoipa::path(
+    get,
+    path = "",
+    tag = "me",
+    operation_id = "getApiMeWhoami",
+    responses(
+        (status = 200, description = "Calling principal", body = WhoamiResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+async fn whoami(
+    State(state): State<MeState>,
+    auth: Authenticated,
+) -> Result<Json<WhoamiResponse>, PlatformError> {
+    let ctx = &auth.0;
+    // `accessible_application_ids` isn't carried in the JWT-derived
+    // `AuthContext`, so resolve it from the principal row. Anchors don't
+    // need the list — they implicitly access every application — but it's
+    // still cheap to include it where present.
+    let accessible_application_ids = state
+        .principal_repo
+        .find_by_id(&ctx.principal_id)
+        .await?
+        .map(|p| p.accessible_application_ids)
+        .unwrap_or_default();
+
+    Ok(Json(WhoamiResponse {
+        principal_id: ctx.principal_id.clone(),
+        principal_type: ctx.principal_type.clone(),
+        scope: ctx.scope.clone(),
+        name: ctx.name.clone(),
+        email: ctx.email.clone(),
+        active: true,
+        roles: ctx.roles.clone(),
+        accessible_client_ids: ctx.accessible_clients.clone(),
+        accessible_application_ids,
+    }))
+}
+
+/// List applications the calling principal has access to. Anchors see
+/// every application; other principals see the apps explicitly granted
+/// to them via `iam_principal_application_access`.
+#[utoipa::path(
+    get,
+    path = "/applications",
+    tag = "me",
+    operation_id = "getApiMeApplications",
+    responses(
+        (status = 200, description = "Accessible applications", body = MyApplicationsListResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+async fn list_my_applications(
+    State(state): State<MeState>,
+    auth: Authenticated,
+) -> Result<Json<MyApplicationsListResponse>, PlatformError> {
+    let all_apps = state.application_repo.find_all().await?;
+    // Same resolution as whoami: pull the hydrated app-access list from
+    // the principal row. Anchors see everything regardless.
+    let principal = state
+        .principal_repo
+        .find_by_id(&auth.0.principal_id)
+        .await?;
+    let accessible_ids: std::collections::HashSet<String> = principal
+        .map(|p| p.accessible_application_ids.into_iter().collect())
+        .unwrap_or_default();
+
+    let apps: Vec<MyApplicationResponse> = all_apps
+        .into_iter()
+        .filter(|a| auth.0.is_anchor() || accessible_ids.contains(&a.id))
+        .map(|a| MyApplicationResponse {
+            id: a.id,
+            code: a.code,
+            name: a.name,
+            description: a.description,
+            icon_url: a.icon_url,
+            base_url: a.default_base_url,
+            website: a.website,
+            logo_mime_type: a.logo_mime_type,
+        })
+        .collect();
+    let total = apps.len();
+
+    Ok(Json(MyApplicationsListResponse {
+        applications: apps,
+        total,
+        // Not scoped to a single client; agents/service accounts span
+        // their assigned clients. Field kept for response-shape
+        // compatibility with the per-client variant.
+        client_id: String::new(),
+    }))
+}
+
 pub fn me_router(state: MeState) -> Router {
     Router::new()
+        .route("/", get(whoami))
+        .route("/applications", get(list_my_applications))
         .route("/clients", get(list_my_clients))
         .route("/clients/{clientId}", get(get_my_client))
         .route(

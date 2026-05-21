@@ -52,6 +52,38 @@ pub struct ListSubscriptionsArgs {
     pub client_id: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListApplicationsArgs {
+    /// If false, include inactive applications. Defaults to active-only.
+    #[serde(default)]
+    pub active: Option<bool>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListRolesArgs {
+    /// Filter by source (e.g. CODE, BOOTSTRAP, API, UI).
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetOpenApiArgs {
+    /// Application code. Defaults to "platform" — the FlowCatalyst
+    /// control-plane API itself, which is what most agents want.
+    #[serde(default, rename = "applicationCode")]
+    pub application_code: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetApplicationCapabilitiesArgs {
+    /// Application code (e.g. "platform", "orders").
+    #[serde(rename = "applicationCode")]
+    pub application_code: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EmptyArgs {}
+
 #[derive(Clone)]
 pub struct FcMcpServer {
     api: Arc<ApiClient>,
@@ -125,15 +157,30 @@ impl FcMcpServer {
             Some(v) => versions
                 .iter()
                 .find(|sv| sv.get("version").and_then(|s| s.as_str()) == Some(v)),
-            None => versions
-                .iter()
-                .find(|sv| sv.get("status").and_then(|s| s.as_str()) == Some("CURRENT")),
+            None => {
+                // Prefer the CURRENT version (operator-promoted) but fall
+                // back to FINALISING. Synced schemas (SDK push, fc-dev's
+                // platform-event-types auto-sync) land in FINALISING and
+                // stay there until an operator promotes them in the UI;
+                // without this fallback, agents would see no schema at all
+                // on a freshly-seeded dev environment.
+                let status_eq = |sv: &&serde_json::Value, target: &str| -> bool {
+                    sv.get("status").and_then(|s| s.as_str()) == Some(target)
+                };
+                versions
+                    .iter()
+                    .find(|sv| status_eq(sv, "CURRENT"))
+                    .or_else(|| versions.iter().find(|sv| status_eq(sv, "FINALISING")))
+            }
         };
 
         let Some(spec) = chosen else {
             let msg = match args.version.as_deref() {
                 Some(v) => format!("schema version {v} not found for event type {}", args.id),
-                None => format!("no CURRENT schema version found for event type {}", args.id),
+                None => format!(
+                    "no CURRENT or FINALISING schema version found for event type {}",
+                    args.id
+                ),
             };
             return Ok(CallToolResult::error(vec![Content::text(msg)]));
         };
@@ -169,6 +216,100 @@ impl FcMcpServer {
             Err(e) => Ok(error_text(e)),
         }
     }
+
+    #[tool(
+        description = "List applications registered in FlowCatalyst. Defaults to active-only; pass active=false to include inactive."
+    )]
+    async fn list_applications(
+        &self,
+        Parameters(args): Parameters<ListApplicationsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.api.list_applications(args.active).await {
+            Ok(v) => Ok(json_text(v)),
+            Err(e) => Ok(error_text(e)),
+        }
+    }
+
+    #[tool(description = "List roles registered in FlowCatalyst. Optionally filter by source.")]
+    async fn list_roles(
+        &self,
+        Parameters(args): Parameters<ListRolesArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.api.list_roles(args.source.as_deref()).await {
+            Ok(v) => Ok(json_text(v)),
+            Err(e) => Ok(error_text(e)),
+        }
+    }
+
+    #[tool(
+        description = "Get a single role by ID, including its assigned permissions. Use list_roles to discover IDs."
+    )]
+    async fn get_role(
+        &self,
+        Parameters(args): Parameters<GetByIdArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.api.get_role(&args.id).await {
+            Ok(v) => Ok(json_text(v)),
+            Err(e) => Ok(error_text(e)),
+        }
+    }
+
+    #[tool(
+        description = "Fetch the CURRENT OpenAPI document for an application (defaults to 'platform' — the FlowCatalyst control-plane API). This is the canonical 'what can be done' surface: every endpoint, parameter, and response shape."
+    )]
+    async fn get_openapi(
+        &self,
+        Parameters(args): Parameters<GetOpenApiArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let code = args.application_code.as_deref().unwrap_or("platform");
+        match self.api.get_openapi(code).await {
+            Ok(v) => Ok(json_text(v)),
+            Err(e) => Ok(error_text(e)),
+        }
+    }
+
+    #[tool(
+        description = "Identify the calling principal: id, type (USER/SERVICE), scope, roles, accessible clients, and accessible applications. Start here to learn what the agent itself can do."
+    )]
+    async fn whoami(
+        &self,
+        Parameters(_): Parameters<EmptyArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.api.whoami().await {
+            Ok(v) => Ok(json_text(v)),
+            Err(e) => Ok(error_text(e)),
+        }
+    }
+
+    #[tool(
+        description = "List applications the calling principal has access to. Combined with whoami, tells the agent which apps it can actually act against right now."
+    )]
+    async fn list_my_applications(
+        &self,
+        Parameters(_): Parameters<EmptyArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.api.list_my_applications().await {
+            Ok(v) => Ok(json_text(v)),
+            Err(e) => Ok(error_text(e)),
+        }
+    }
+
+    #[tool(
+        description = "Everything an agent needs to call into an application: metadata + defaultBaseUrl, the CURRENT OpenAPI document (if synced), assignable roles, and CURRENT event types. Missing sub-resources come back as null instead of failing the whole call."
+    )]
+    async fn get_application_capabilities(
+        &self,
+        Parameters(args): Parameters<GetApplicationCapabilitiesArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match self
+            .api
+            .get_application_capabilities(&args.application_code)
+            .await
+        {
+            Ok(v) => Ok(json_text(v)),
+            Err(e) => Ok(error_text(e)),
+        }
+    }
 }
 
 #[tool_handler]
@@ -185,10 +326,21 @@ impl ServerHandler for FcMcpServer {
             env!("CARGO_PKG_VERSION"),
         ))
         .with_instructions(
-            "FlowCatalyst MCP server. Provides read-only access to event types, JSON \
-             schemas, and webhook subscriptions. Use list_event_types/get_event_type \
-             to explore the catalog, get_schema to read JSON Schemas, and \
-             list_subscriptions/get_subscription for webhook configuration.",
+            "FlowCatalyst MCP server. Read-only discovery of the platform:\n\
+             - whoami returns the calling principal: id, type, scope, roles, \
+               and the clients + applications it can act against. Start here.\n\
+             - list_my_applications scopes that down to apps the principal has \
+               access to right now.\n\
+             - get_application_capabilities(code) bundles app metadata + \
+               defaultBaseUrl + OpenAPI + assignable roles + event types — \
+               everything needed to call into the named application.\n\
+             - get_openapi (default applicationCode='platform') returns the \
+               full REST API specification for an application.\n\
+             - list_applications / list_roles + get_role enumerate the platform-\
+               wide registry independently of the caller's access.\n\
+             - list_event_types / get_event_type / get_schema explore the event \
+               catalog and JSON Schemas.\n\
+             - list_subscriptions / get_subscription show webhook configuration.",
         )
     }
 
@@ -198,6 +350,14 @@ impl ServerHandler for FcMcpServer {
         _ctx: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
         let resources = vec![
+            RawResource::new(
+                "flowcatalyst://openapi/platform",
+                "Platform OpenAPI".to_string(),
+            )
+            .no_annotation(),
+            RawResource::new("flowcatalyst://applications", "Applications".to_string())
+                .no_annotation(),
+            RawResource::new("flowcatalyst://roles", "Roles".to_string()).no_annotation(),
             RawResource::new("flowcatalyst://event-types", "Event Types".to_string())
                 .no_annotation(),
             RawResource::new("flowcatalyst://subscriptions", "Subscriptions".to_string())
@@ -223,11 +383,19 @@ impl ServerHandler for FcMcpServer {
                     .await
             }
             "flowcatalyst://subscriptions" => self.api.list_subscriptions(None).await,
+            "flowcatalyst://applications" => self.api.list_applications(None).await,
+            "flowcatalyst://roles" => self.api.list_roles(None).await,
             other => {
                 if let Some(id) = other.strip_prefix("flowcatalyst://event-types/") {
                     self.api.get_event_type(id).await
                 } else if let Some(id) = other.strip_prefix("flowcatalyst://subscriptions/") {
                     self.api.get_subscription(id).await
+                } else if let Some(code) = other.strip_prefix("flowcatalyst://openapi/") {
+                    self.api.get_openapi(code).await
+                } else if let Some(id) = other.strip_prefix("flowcatalyst://roles/") {
+                    self.api.get_role(id).await
+                } else if let Some(code) = other.strip_prefix("flowcatalyst://applications/") {
+                    self.api.get_application_by_code(code).await
                 } else {
                     return Err(McpError::resource_not_found(
                         "resource_not_found",
