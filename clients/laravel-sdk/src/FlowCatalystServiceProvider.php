@@ -6,6 +6,13 @@ namespace FlowCatalyst;
 
 use FlowCatalyst\Auth\Contracts\OidcUserHandler;
 use FlowCatalyst\Auth\DefaultOidcUserHandler;
+use FlowCatalyst\Auth\Http\Middleware\AuthenticateFc;
+use FlowCatalyst\Auth\Http\Middleware\RequireAuth;
+use FlowCatalyst\Auth\Http\Middleware\RequireBearer;
+use FlowCatalyst\Auth\Http\Middleware\RequireSession;
+use FlowCatalyst\Auth\Rbac\RbacCatalogue;
+use FlowCatalyst\Auth\Support\AccessTokenValidator;
+use FlowCatalyst\Auth\Support\JwksCache;
 use FlowCatalyst\Client\Auth\OidcTokenManager;
 use FlowCatalyst\Client\Auth\TokenProviderInterface;
 use FlowCatalyst\Client\FlowCatalystClient;
@@ -39,6 +46,7 @@ class FlowCatalystServiceProvider extends ServiceProvider
         $this->registerOutbox();
         $this->registerUnitOfWork();
         $this->registerOidcUserAuth();
+        $this->registerBearerValidator();
         $this->registerDefinitions();
     }
 
@@ -177,10 +185,55 @@ class FlowCatalystServiceProvider extends ServiceProvider
      */
     protected function registerMiddleware(): void
     {
-        $this->app['router']->aliasMiddleware(
+        $router = $this->app['router'];
+        $router->aliasMiddleware(
             'flowcatalyst.webhook',
-            \FlowCatalyst\Http\Middleware\ValidateWebhookSignature::class
+            \FlowCatalyst\Http\Middleware\ValidateWebhookSignature::class,
         );
+        // Auth middleware aliases — match the TS plugin's guard names.
+        $router->aliasMiddleware('fc.auth', AuthenticateFc::class);
+        $router->aliasMiddleware('fc.session', RequireSession::class);
+        $router->aliasMiddleware('fc.bearer', RequireBearer::class);
+        $router->aliasMiddleware('fc.any', RequireAuth::class);
+    }
+
+    /**
+     * Register the Bearer-token validator + (optional) RBAC catalogue.
+     *
+     * Apps register their own RBAC catalogue by binding {@see RbacCatalogue}
+     * in their `AppServiceProvider`:
+     *
+     *   $this->app->instance(RbacCatalogue::class, RbacBuilder::make()
+     *       ->role('billing-admin')->grants(['invoice:*'])
+     *       ->build());
+     */
+    protected function registerBearerValidator(): void
+    {
+        $this->app->singleton(JwksCache::class, function ($app) {
+            $config = $app['config']['flowcatalyst'];
+            $ttl = (int) ($config['oidc']['jwks_ttl_seconds'] ?? 300);
+            return new JwksCache(
+                http: new \GuzzleHttp\Client(['timeout' => 10]),
+                cache: $app['cache']->driver($config['oidc']['jwks_cache_driver'] ?? null),
+                ttlSeconds: $ttl,
+            );
+        });
+
+        $this->app->singleton(AccessTokenValidator::class, function ($app) {
+            $config = $app['config']['flowcatalyst'];
+            return new AccessTokenValidator(
+                jwks: $app->make(JwksCache::class),
+                baseUrl: $config['base_url'],
+                expectedAudience: $config['oidc']['expected_audience'] ?? null,
+            );
+        });
+
+        $this->app->singleton(AuthenticateFc::class, function ($app) {
+            return new AuthenticateFc(
+                validator: $app->make(AccessTokenValidator::class),
+                rbac: $app->bound(RbacCatalogue::class) ? $app->make(RbacCatalogue::class) : null,
+            );
+        });
     }
 
     /**

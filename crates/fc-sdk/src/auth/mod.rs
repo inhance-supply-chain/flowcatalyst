@@ -65,6 +65,9 @@ pub mod claims;
 pub mod jwks;
 pub mod oauth;
 
+#[cfg(feature = "axum")]
+pub mod axum;
+
 pub use claims::{AccessTokenClaims, AuthContext};
 pub use jwks::{HmacTokenValidator, JwksCache, TokenValidator, TokenValidatorConfig};
 pub use oauth::{
@@ -90,6 +93,14 @@ pub enum AuthError {
     /// Token exchange or OAuth2 flow error.
     #[error("Token exchange error: {0}")]
     TokenExchange(String),
+
+    /// Configuration error (bad key length, missing required field, etc.).
+    #[error("Config error: {0}")]
+    Config(String),
+
+    /// Cryptographic operation failed (encrypt/decrypt/sign/verify).
+    #[error("Crypto error: {0}")]
+    Crypto(String),
 }
 
 #[cfg(test)]

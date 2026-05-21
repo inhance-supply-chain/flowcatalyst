@@ -24,6 +24,7 @@ import type {
 	FastifyRequest,
 	preHandlerHookHandler,
 } from "fastify";
+import fp from "fastify-plugin";
 import fastifyCookie from "@fastify/cookie";
 import {
 	buildAuthorizeUrl,
@@ -123,7 +124,7 @@ const DEFAULT_SCOPE = "openid profile email";
 const DEFAULT_MAX_AGE = 60 * 60 * 8; // 8h
 const REFRESH_LEEWAY_MS = 60_000;
 
-export const flowcatalystAuth: FastifyPluginAsync<FlowcatalystAuthOptions> =
+const flowcatalystAuthImpl: FastifyPluginAsync<FlowcatalystAuthOptions> =
 	async (fastify, opts) => {
 		await ensureCookiePlugin(fastify);
 
@@ -304,6 +305,16 @@ export const flowcatalystAuth: FastifyPluginAsync<FlowcatalystAuthOptions> =
 		};
 		fastify.decorate("fc", decorator);
 	};
+
+/**
+ * Wrapped with `fastify-plugin` so the `fc` decorator, `request.principal`,
+ * and the registered `/auth/*` routes escape the encapsulation boundary
+ * and are visible to the parent scope.
+ */
+export const flowcatalystAuth = fp(flowcatalystAuthImpl, {
+	fastify: "5.x",
+	name: "@flowcatalyst/sdk/fastify",
+});
 
 // ───────────────────────── helpers ─────────────────────────
 

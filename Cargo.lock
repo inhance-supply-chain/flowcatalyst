@@ -2625,9 +2625,13 @@ dependencies = [
 name = "fc-sdk"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "async-trait",
+ "axum",
+ "axum-extra",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "fc-common",
  "getrandom 0.3.4",
@@ -2642,9 +2646,12 @@ dependencies = [
  "sha2",
  "sqlx",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-test",
+ "tower",
  "tracing",
+ "urlencoding",
  "uuid",
 ]
 

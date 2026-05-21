@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace FlowCatalyst\Auth\DTOs;
 
+use FlowCatalyst\Auth\Rbac\RbacCatalogue;
+
 /**
  * Data transfer object representing an authenticated FlowCatalyst user.
  *
@@ -38,9 +40,10 @@ final readonly class FlowCatalystUser
         public string $sub,
 
         /**
-         * The user's email address.
+         * The user's email address. `null` for SERVICE principals (client
+         * credentials) and any caller without a user identity.
          */
-        public string $email,
+        public ?string $email,
 
         /**
          * The user's display name (may be null).
@@ -64,6 +67,20 @@ final readonly class FlowCatalystUser
          * The refresh token for renewing the access token.
          */
         public ?string $refreshToken = null,
+
+        /**
+         * Resolved permissions (set by {@see withRbac()}). Empty when no
+         * catalogue has been applied.
+         *
+         * @var array<int, string>
+         */
+        public array $permissions = [],
+
+        /**
+         * How the user authenticated for the current request:
+         * `'session'` for browser flow, `'bearer'` for API callers.
+         */
+        public ?string $mechanism = null,
     ) {}
 
     /**
@@ -189,6 +206,150 @@ final readonly class FlowCatalystUser
     }
 
     /**
+     * ALL — every role in `$roles` must be present.
+     *
+     * @param array<int, string> $roles
+     */
+    public function hasRoles(array $roles): bool
+    {
+        $owned = $this->getRoles();
+        foreach ($roles as $r) {
+            if (!in_array($r, $owned, true)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * ANY — at least one role in `$roles` must be present.
+     *
+     * @param array<int, string> $roles
+     */
+    public function hasAnyRole(array $roles): bool
+    {
+        $owned = $this->getRoles();
+        foreach ($roles as $r) {
+            if (in_array($r, $owned, true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * ALL — every permission must be granted (wildcards honoured).
+     *
+     * @param array<int, string> $permissions
+     */
+    public function hasPermissionTo(array $permissions): bool
+    {
+        foreach ($permissions as $p) {
+            if (!RbacCatalogue::matches($this->permissions, $p)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * ANY — at least one permission must be granted.
+     *
+     * @param array<int, string> $permissions
+     */
+    public function hasAnyPermissionTo(array $permissions): bool
+    {
+        foreach ($permissions as $p) {
+            if (RbacCatalogue::matches($this->permissions, $p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * User scope (`'anchor' | 'partner' | 'client'`) — lower-cased from
+     * the `scope` claim. Returns `null` if the claim is missing.
+     */
+    public function getScope(): ?string
+    {
+        $scope = $this->claims['scope'] ?? null;
+        return is_string($scope) ? strtolower($scope) : null;
+    }
+
+    /**
+     * Whether this user has anchor (full platform) access. Anchor users
+     * have `scope == 'anchor'` and/or `clients` containing `'*'`.
+     */
+    public function isAnchor(): bool
+    {
+        return $this->getScope() === 'anchor' || $this->hasFullAccess();
+    }
+
+    /**
+     * Application codes derived from roles (the `applications` claim).
+     *
+     * @return array<int, string>
+     */
+    public function getApplications(): array
+    {
+        $apps = $this->claims['applications'] ?? [];
+        return is_array($apps) ? array_values(array_filter($apps, 'is_string')) : [];
+    }
+
+    /**
+     * Whether the user accessed via session cookie.
+     */
+    public function isSession(): bool
+    {
+        return $this->mechanism === 'session';
+    }
+
+    /**
+     * Whether the user accessed via Bearer token.
+     */
+    public function isBearer(): bool
+    {
+        return $this->mechanism === 'bearer';
+    }
+
+    /**
+     * Return a new principal with permissions resolved through `$catalogue`.
+     * The original is left unchanged.
+     */
+    public function withRbac(RbacCatalogue $catalogue): self
+    {
+        return new self(
+            sub: $this->sub,
+            email: $this->email,
+            name: $this->name,
+            claims: $this->claims,
+            accessToken: $this->accessToken,
+            refreshToken: $this->refreshToken,
+            permissions: $catalogue->resolve($this->getRoles()),
+            mechanism: $this->mechanism,
+        );
+    }
+
+    /**
+     * Return a copy with a different `$mechanism` field. Used by the
+     * middleware to tag Bearer-vs-session principals consistently.
+     */
+    public function withMechanism(string $mechanism): self
+    {
+        return new self(
+            sub: $this->sub,
+            email: $this->email,
+            name: $this->name,
+            claims: $this->claims,
+            accessToken: $this->accessToken,
+            refreshToken: $this->refreshToken,
+            permissions: $this->permissions,
+            mechanism: $mechanism,
+        );
+    }
+
+    /**
      * Create from decoded JWT claims.
      *
      * @param array<string, mixed> $claims
@@ -200,11 +361,36 @@ final readonly class FlowCatalystUser
     ): self {
         return new self(
             sub: $claims['sub'] ?? throw new \InvalidArgumentException('Missing sub claim'),
-            email: $claims['email'] ?? $claims['preferred_username'] ?? throw new \InvalidArgumentException('Missing email claim'),
+            email: $claims['email'] ?? $claims['preferred_username'] ?? null,
             name: $claims['name'] ?? null,
             claims: $claims,
             accessToken: $accessToken,
             refreshToken: $refreshToken,
+        );
+    }
+
+    /**
+     * Build from FlowCatalyst access-token claims (both `authorization_code`
+     * and `client_credentials` grants). Unlike {@see fromClaims()} this does
+     * not require an `email` claim — SERVICE tokens never carry one.
+     *
+     * @param array<string, mixed> $claims
+     */
+    public static function fromAccessTokenClaims(
+        array $claims,
+        ?string $accessToken = null,
+        ?string $refreshToken = null,
+        ?string $mechanism = null,
+    ): self {
+        return new self(
+            sub: $claims['sub'] ?? throw new \InvalidArgumentException('Missing sub claim'),
+            email: isset($claims['email']) && is_string($claims['email']) ? $claims['email'] : null,
+            name: isset($claims['name']) && is_string($claims['name']) ? $claims['name'] : null,
+            claims: $claims,
+            accessToken: $accessToken,
+            refreshToken: $refreshToken,
+            permissions: [],
+            mechanism: $mechanism,
         );
     }
 }

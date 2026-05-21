@@ -13,6 +13,9 @@ outbox-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/chrono"]
 outbox-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/chrono"]
 client = ["dep:reqwest"]
 auth = ["dep:reqwest", "dep:jsonwebtoken", "dep:sha2", "dep:base64", "dep:rand"]
+# Axum integration for `auth` — extractors, middleware, RBAC catalogue,
+# AES-GCM cookie session storage, and OIDC login/callback handlers.
+axum = ["auth", "dep:axum", "dep:axum-extra", "dep:tower", "dep:aes-gcm", "dep:urlencoding", "dep:bytes", "dep:time"]
 webhook = ["dep:hmac", "dep:sha2", "dep:hex"]
 
 # Cache primitive — Memory backend ships with the `cache` feature; the
@@ -53,6 +56,15 @@ getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
 # Webhook signature validation (optional)
 hmac = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
+
+# Axum integration (optional)
+axum = { workspace = true, optional = true }
+axum-extra = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+aes-gcm = { workspace = true, optional = true }
+urlencoding = { version = "2.1", optional = true }
+bytes = { version = "1", optional = true }
+time = { version = "0.3", optional = true }
 
 # Cache + lock backends (optional, gated by feature flags above)
 redis = { workspace = true, optional = true }

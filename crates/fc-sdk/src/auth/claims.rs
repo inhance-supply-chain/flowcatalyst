@@ -53,6 +53,12 @@ pub struct AccessTokenClaims {
     /// Roles assigned to this principal
     #[serde(default)]
     pub roles: Vec<String>,
+
+    /// Application codes derived from roles (e.g. `"operant"` from
+    /// `"operant:admin"`). Always present on tokens issued by FC, but
+    /// `#[serde(default)]` lets us deserialize older tokens too.
+    #[serde(default)]
+    pub applications: Vec<String>,
 }
 
 impl AccessTokenClaims {
@@ -189,6 +195,7 @@ mod tests {
             name: "Test User".to_string(),
             clients: clients.into_iter().map(String::from).collect(),
             roles: roles.into_iter().map(String::from).collect(),
+            applications: vec![],
         }
     }
 
