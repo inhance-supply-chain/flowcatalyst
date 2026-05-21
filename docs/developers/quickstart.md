@@ -201,10 +201,11 @@ fc-dev --reset-db
 # Connect to an existing Postgres instead of the embedded one
 fc-dev --embedded-db=false --database-url postgresql://localhost:5432/flowcatalyst
 
-# Sidecar an external app's outbox (e.g. PostGIS in Docker) into a local fc-dev
-fc-dev outbox poll \
-  --db-url postgres://user:pass@localhost:5433/myapp \
-  --token "$FC_SERVICE_TOKEN"
+# Sidecar an external app's outbox (e.g. PostGIS in Docker) into a local fc-dev:
+#   one-time setup writes FC_OUTBOX_* to ./.env (0600 perms)
+fc-dev outbox init
+#   then run the poller — reads .env, auto-creates the outbox table
+fc-dev outbox poll
 
 # Run the MCP server (read-only access for LLM clients)
 fc-dev mcp           # stdio

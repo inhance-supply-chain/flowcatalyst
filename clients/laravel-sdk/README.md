@@ -20,6 +20,46 @@ Publish the configuration file:
 php artisan vendor:publish --tag=flowcatalyst-config
 ```
 
+## Local development with `fc-dev`
+
+For local work you need a FlowCatalyst control plane to talk to.
+`fc-dev` is the official one-binary dev environment — bundled
+PostgreSQL, platform API, message router, scheduler, and frontend
+in a single process.
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/flowcatalyst/flowcatalyst/main/install.sh | sh
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/flowcatalyst/flowcatalyst/main/install.ps1 | iex
+
+fc-dev          # starts API on http://localhost:8080
+```
+
+If you use the **Postbox** (outbox pattern), you also need
+`fc-dev outbox` running as a sidecar — it polls your app's
+`outbox_messages` table and forwards events to the platform.
+This sits alongside the `php artisan flowcatalyst:postbox:dispatch`
+queue worker (or replaces it for setups where you'd rather not run
+Laravel's queue runner for outbox forwarding).
+
+```bash
+# In your Laravel project directory:
+
+# Once: write FC_OUTBOX_DB_URL / FC_OUTBOX_API_URL / FC_OUTBOX_TOKEN
+# into ./.env (0600 perms; no secrets on argv or shell history).
+# fc-dev outbox init appends to your existing .env — your other
+# FLOWCATALYST_* keys are not touched.
+fc-dev outbox init
+
+# Daily: reads .env, auto-creates the `outbox_messages` table on
+# first run if your Postbox migration hasn't been run yet, then polls.
+fc-dev outbox poll
+```
+
+Complete reference: [fc-dev CLI docs](https://github.com/flowcatalyst/flowcatalyst-rust/blob/main/docs/developers/fc-dev.md).
+
 ## Configuration
 
 Add the following to your `.env` file:

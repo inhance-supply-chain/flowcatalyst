@@ -72,7 +72,8 @@ fc-dev upgrade --force   # reinstall even if current
 | `fc-dev` (bare) / `fc-dev start` | Run the dev monolith — API, router, scheduler, stream, frontend, embedded PG. |
 | `fc-dev init` | Bootstrap a fresh local app: admin user, client, application, service account, `.env`. |
 | `fc-dev fresh` | TRUNCATE every FlowCatalyst-owned table in the DB (keeps schema). |
-| `fc-dev outbox poll` | Standalone outbox poller. Polls an external app's `outbox_messages` Postgres and forwards to a platform API. |
+| `fc-dev outbox init` | One-time setup: writes `FC_OUTBOX_*` keys to the project's `.env`. |
+| `fc-dev outbox poll` | Standalone outbox poller. Reads config from `.env` / process env; auto-creates the `outbox_messages` table if missing. |
 | `fc-dev mcp` | Read-only MCP server for LLM clients (stdio or HTTP). |
 | `fc-dev upgrade` | Replace the running binary with the latest GitHub release. |
 
@@ -185,7 +186,7 @@ Local development only — there is no remote mode.
 
 ---
 
-## `fc-dev outbox poll` — standalone outbox poller
+## `fc-dev outbox` — standalone outbox poller
 
 Poll an external app's `outbox_messages` Postgres table and forward
 Events / DispatchJobs / AuditLogs to a FlowCatalyst platform API.
@@ -196,25 +197,57 @@ isn't included in the embedded Postgres bundle — so the app runs against
 Docker PostGIS, but you still want fc-dev to play the role of "the
 outbox processor sidecar."
 
-This subcommand boots **nothing else**: no embedded Postgres, no platform
-API, no queue, no scheduler. Just the outbox processor and an HTTP client.
+`outbox` is split into two subcommands so secrets never appear on the
+command line: `init` writes config into the project's `.env`, then `poll`
+reads from there. Daily use is `fc-dev outbox poll` with no flags.
+
+The poller boots **nothing else**: no embedded Postgres, no platform API,
+no queue, no scheduler. Just the outbox processor and an HTTP client.
+
+### `outbox init` — one-time setup
 
 ```sh
-fc-dev outbox poll \
-  --db-url postgres://user:pass@localhost:5433/myapp \
-  --api-url http://localhost:8080 \
-  --token "$FC_SERVICE_TOKEN"
+cd ~/code/my-postgis-app
+fc-dev outbox init
+# prompts for:
+#   Postgres URL (e.g. postgres://user:pass@localhost:5433/myapp)
+#   Platform API URL [http://localhost:8080]
+#   Bearer token
+# writes ./.env (0600 perms on Unix) with:
+#   FC_OUTBOX_DB_URL
+#   FC_OUTBOX_API_URL
+#   FC_OUTBOX_TOKEN
 ```
 
-### Flags
+Idempotent — re-running with the same values is a no-op. Pass any field
+as a flag to skip its prompt (`--db-url=...`), or `--yes` to fail fast if
+any required value is missing (for scripted setup, e.g. CI).
 
-| Flag / env | Default | Purpose |
+### `outbox poll` — daily use
+
+```sh
+cd ~/code/my-postgis-app
+fc-dev outbox poll
+# reads .env → connects → ensures outbox_messages table exists → polls
+```
+
+On startup, the poller runs `CREATE TABLE IF NOT EXISTS outbox_messages
+(...)` plus the partial pending/stuck indexes. The schema matches the
+one the FlowCatalyst SDKs ship in their own migrations, so apps that
+already migrated their database are unaffected. Opt out with
+`--skip-bootstrap` (or `FC_OUTBOX_SKIP_BOOTSTRAP=true`) if you'd rather
+manage the schema entirely from the app side.
+
+Flags (every one also accepts the matching env var; flags override env):
+
+| Flag | Env / default | Purpose |
 |---|---|---|
-| `--db-url` / `FC_OUTBOX_DB_URL` | *(required)* | Postgres URL of the app DB owning `outbox_messages` |
-| `--api-url` / `FC_OUTBOX_API_URL` | `http://localhost:8080` | Platform API base URL to forward to |
-| `--token` / `FC_OUTBOX_TOKEN` | — | Bearer token for the platform API; required in practice |
-| `--poll-interval-ms` / `FC_OUTBOX_POLL_INTERVAL_MS` | `1000` | Poll cadence |
-| `--max-connections` / `FC_OUTBOX_MAX_CONNECTIONS` | `5` | DB pool size |
+| `--db-url` | `FC_OUTBOX_DB_URL` *(required)* | Postgres URL of the app DB owning `outbox_messages` |
+| `--api-url` | `FC_OUTBOX_API_URL` / `http://localhost:8080` | Platform API base URL to forward to |
+| `--token` | `FC_OUTBOX_TOKEN` | Bearer token for the platform API (required in practice) |
+| `--poll-interval-ms` | `FC_OUTBOX_POLL_INTERVAL_MS` / `1000` | Poll cadence |
+| `--max-connections` | `FC_OUTBOX_MAX_CONNECTIONS` / `5` | DB pool size |
+| `--skip-bootstrap` | `FC_OUTBOX_SKIP_BOOTSTRAP` / `false` | Don't auto-create the table |
 
 The DB password is redacted before logging.
 
@@ -233,9 +266,9 @@ curl -s -X POST http://localhost:8080/oauth/token \
   | jq -r .access_token
 ```
 
-Tokens are short-lived. In practice you'll either pin them in an env file
-and refresh by re-running the curl, or wrap `outbox poll` in a script
-that refreshes on startup.
+Tokens are short-lived. In practice you'll either pin them in `.env` and
+refresh by re-running the curl + `fc-dev outbox init --token=<new>`, or
+wrap `outbox poll` in a script that refreshes on startup.
 
 ### Why a separate process
 
@@ -322,13 +355,14 @@ docker run --name pg-postgis -p 5433:5432 \
 # 2. Run fc-dev as normal (uses its own embedded PG for the platform DB)
 fc-dev
 
-# 3. In a second terminal, poll your app's outbox and forward to fc-dev
-export FC_OUTBOX_DB_URL=postgres://postgres:dev@localhost:5433/myapp
-export FC_OUTBOX_TOKEN="$(curl -s -X POST http://localhost:8080/oauth/token \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'grant_type=client_credentials&client_id=...&client_secret=...' \
-  | jq -r .access_token)"
+# 3. One-time: from your project directory, write FC_OUTBOX_* into .env
+cd ~/code/my-postgis-app
+fc-dev outbox init
+#   Postgres URL: postgres://postgres:dev@localhost:5433/myapp
+#   Platform API URL [http://localhost:8080]:
+#   Bearer token: <paste from /oauth/token>
 
+# 4. Daily: poll. Auto-creates `outbox_messages` on first run.
 fc-dev outbox poll
 ```
 
@@ -370,10 +404,11 @@ The full list lives in `fc-dev <subcommand> --help`. The most common:
 | `FC_RESET_DB` | `false` | `start` |
 | `FC_SCHEDULER_ENABLED` | `true` | `start` |
 | `FC_OUTBOX_ENABLED` | `false` | `start` (embedded outbox) |
-| `FC_OUTBOX_DB_URL` | — | `start`, `outbox poll` |
-| `FC_OUTBOX_API_URL` | `http://localhost:8080` | `outbox poll` |
-| `FC_OUTBOX_TOKEN` | — | `outbox poll` |
+| `FC_OUTBOX_DB_URL` | — | `start`, `outbox poll`, `outbox init` |
+| `FC_OUTBOX_API_URL` | `http://localhost:8080` | `outbox poll`, `outbox init` |
+| `FC_OUTBOX_TOKEN` | — | `outbox poll`, `outbox init` |
 | `FC_OUTBOX_POLL_INTERVAL_MS` | `1000` | `start`, `outbox poll` |
+| `FC_OUTBOX_SKIP_BOOTSTRAP` | `false` | `outbox poll` — opt out of `CREATE TABLE IF NOT EXISTS` |
 | `FC_DEV_MODE` | `true` (auto-set) | global behaviour gate |
 | `FC_STATIC_DIR` | — | `start` — serve frontend from filesystem (live reload) |
 | `FC_JWT_PRIVATE_KEY_PATH` / `FC_JWT_PUBLIC_KEY_PATH` | `~/.cache/flowcatalyst-dev/jwt-keys/` | `start` |
