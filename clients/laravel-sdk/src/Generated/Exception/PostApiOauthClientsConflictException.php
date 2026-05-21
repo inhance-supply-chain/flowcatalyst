@@ -8,7 +8,7 @@ class PostApiOauthClientsConflictException extends ConflictException
      * @var \Psr\Http\Message\ResponseInterface
      */
     private $response;
-    public function __construct(\Psr\Http\Message\ResponseInterface $response = null)
+    public function __construct(?\Psr\Http\Message\ResponseInterface $response = null)
     {
         parent::__construct('Duplicate client_id');
         $this->response = $response;

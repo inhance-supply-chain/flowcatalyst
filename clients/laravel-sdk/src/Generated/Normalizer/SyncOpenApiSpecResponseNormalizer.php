@@ -27,21 +27,21 @@ class SyncOpenApiSpecResponseNormalizer implements DenormalizerInterface, Normal
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\SyncOpenApiSpecResponse();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\SyncOpenApiSpecResponse();
         if (\array_key_exists('hasBreaking', $data) && \is_int($data['hasBreaking'])) {
             $data['hasBreaking'] = (bool) $data['hasBreaking'];
         }
         if (\array_key_exists('unchanged', $data) && \is_int($data['unchanged'])) {
             $data['unchanged'] = (bool) $data['unchanged'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
             $object->setApplicationCode($data['applicationCode']);

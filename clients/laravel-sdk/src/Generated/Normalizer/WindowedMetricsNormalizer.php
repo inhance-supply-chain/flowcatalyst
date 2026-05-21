@@ -27,21 +27,21 @@ class WindowedMetricsNormalizer implements DenormalizerInterface, NormalizerInte
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\WindowedMetrics();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\WindowedMetrics();
         if (\array_key_exists('successRate', $data) && \is_int($data['successRate'])) {
             $data['successRate'] = (double) $data['successRate'];
         }
         if (\array_key_exists('throughputPerSec', $data) && \is_int($data['throughputPerSec'])) {
             $data['throughputPerSec'] = (double) $data['throughputPerSec'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('failureCount', $data) && $data['failureCount'] !== null) {
             $object->setFailureCount($data['failureCount']);

@@ -27,21 +27,21 @@ class DispatchJobReadResponseNormalizer implements DenormalizerInterface, Normal
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\DispatchJobReadResponse();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\DispatchJobReadResponse();
         if (\array_key_exists('isCompleted', $data) && \is_int($data['isCompleted'])) {
             $data['isCompleted'] = (bool) $data['isCompleted'];
         }
         if (\array_key_exists('isTerminal', $data) && \is_int($data['isTerminal'])) {
             $data['isTerminal'] = (bool) $data['isTerminal'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('aggregate', $data) && $data['aggregate'] !== null) {
             $object->setAggregate($data['aggregate']);

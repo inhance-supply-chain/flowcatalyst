@@ -8,7 +8,7 @@ class PostApiApplicationsByAppCodeScheduledJobsSyncBadRequestException extends B
      * @var \Psr\Http\Message\ResponseInterface
      */
     private $response;
-    public function __construct(\Psr\Http\Message\ResponseInterface $response = null)
+    public function __construct(?\Psr\Http\Message\ResponseInterface $response = null)
     {
         parent::__construct('Validation error');
         $this->response = $response;

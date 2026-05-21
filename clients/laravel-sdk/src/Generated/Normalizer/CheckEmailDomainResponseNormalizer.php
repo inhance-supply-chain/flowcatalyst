@@ -27,13 +27,16 @@ class CheckEmailDomainResponseNormalizer implements DenormalizerInterface, Norma
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\CheckEmailDomainResponse();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\CheckEmailDomainResponse();
         if (\array_key_exists('emailExists', $data) && \is_int($data['emailExists'])) {
             $data['emailExists'] = (bool) $data['emailExists'];
         }
@@ -45,9 +48,6 @@ class CheckEmailDomainResponseNormalizer implements DenormalizerInterface, Norma
         }
         if (\array_key_exists('requiresClientId', $data) && \is_int($data['requiresClientId'])) {
             $data['requiresClientId'] = (bool) $data['requiresClientId'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('allowedClientIds', $data) && $data['allowedClientIds'] !== null) {
             $values = [];

@@ -27,18 +27,18 @@ class SyncScheduledJobsRequestNormalizer implements DenormalizerInterface, Norma
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\SyncScheduledJobsRequest();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\SyncScheduledJobsRequest();
         if (\array_key_exists('archiveUnlisted', $data) && \is_int($data['archiveUnlisted'])) {
             $data['archiveUnlisted'] = (bool) $data['archiveUnlisted'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('archiveUnlisted', $data) && $data['archiveUnlisted'] !== null) {
             $object->setArchiveUnlisted($data['archiveUnlisted']);

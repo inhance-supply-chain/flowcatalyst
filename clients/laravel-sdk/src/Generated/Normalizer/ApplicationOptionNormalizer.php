@@ -27,15 +27,15 @@ class ApplicationOptionNormalizer implements DenormalizerInterface, NormalizerIn
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\ApplicationOption();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
-        }
-        $object = new \FlowCatalyst\Generated\Model\ApplicationOption();
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('code', $data) && $data['code'] !== null) {
             $object->setCode($data['code']);

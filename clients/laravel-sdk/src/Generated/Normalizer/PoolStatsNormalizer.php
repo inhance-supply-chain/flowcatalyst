@@ -27,18 +27,18 @@ class PoolStatsNormalizer implements DenormalizerInterface, NormalizerInterface,
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\PoolStats();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\PoolStats();
         if (\array_key_exists('is_rate_limited', $data) && \is_int($data['is_rate_limited'])) {
             $data['is_rate_limited'] = (bool) $data['is_rate_limited'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('active_workers', $data) && $data['active_workers'] !== null) {
             $object->setActiveWorkers($data['active_workers']);

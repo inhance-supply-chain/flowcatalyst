@@ -8,7 +8,7 @@ class PostApiSubscriptionsByIdResumeNotFoundException extends NotFoundException
      * @var \Psr\Http\Message\ResponseInterface
      */
     private $response;
-    public function __construct(\Psr\Http\Message\ResponseInterface $response = null)
+    public function __construct(?\Psr\Http\Message\ResponseInterface $response = null)
     {
         parent::__construct('Subscription not found');
         $this->response = $response;
