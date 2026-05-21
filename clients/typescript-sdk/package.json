@@ -52,7 +52,7 @@
 		"neverthrow": "^8.1.1"
 	},
 	"peerDependencies": {
-		"effect": "^4.0.0-beta.68"
+		"effect": "^4.0.0-beta.70"
 	},
 	"peerDependenciesMeta": {
 		"effect": {
@@ -62,7 +62,7 @@
 	"devDependencies": {
 		"@hey-api/openapi-ts": "^0.91.1",
 		"@types/node": "^22.0.0",
-		"effect": "^4.0.0-beta.68",
+		"effect": "^4.0.0-beta.70",
 		"typescript": "^6.0.0"
 	},
 	"engines": {
