@@ -5,6 +5,7 @@
 
 pub mod assign_roles;
 pub mod create;
+pub mod deactivate;
 pub mod delete;
 pub mod events;
 pub mod regenerate_secret;
@@ -13,8 +14,9 @@ pub mod update;
 
 // Re-export events
 pub use events::{
-    ServiceAccountCreated, ServiceAccountDeleted, ServiceAccountRolesAssigned,
-    ServiceAccountSecretRegenerated, ServiceAccountTokenRegenerated, ServiceAccountUpdated,
+    ServiceAccountCreated, ServiceAccountDeactivated, ServiceAccountDeleted,
+    ServiceAccountRolesAssigned, ServiceAccountSecretRegenerated, ServiceAccountTokenRegenerated,
+    ServiceAccountUpdated,
 };
 
 // Re-export commands and use cases
@@ -23,6 +25,8 @@ pub use create::{
 };
 
 pub use update::{UpdateServiceAccountCommand, UpdateServiceAccountUseCase};
+
+pub use deactivate::{DeactivateServiceAccountCommand, DeactivateServiceAccountUseCase};
 
 pub use delete::{DeleteServiceAccountCommand, DeleteServiceAccountUseCase};
 

@@ -420,6 +420,24 @@ impl OAuthClientRepository {
         self.hydrate_all(clients).await
     }
 
+    /// Find every OAuth client wired to a given service account
+    /// principal (i.e. `service_account_principal_id = $1`). Typically
+    /// returns 0 or 1 row, but the column is unconstrained so we return
+    /// a Vec.
+    pub async fn find_by_service_account_principal_id(
+        &self,
+        principal_id: &str,
+    ) -> Result<Vec<OAuthClient>> {
+        let rows = sqlx::query_as::<_, OAuthClientRow>(
+            "SELECT * FROM oauth_clients WHERE service_account_principal_id = $1",
+        )
+        .bind(principal_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let clients: Vec<OAuthClient> = rows.into_iter().map(OAuthClient::from).collect();
+        self.hydrate_all(clients).await
+    }
+
     pub async fn find_by_application(&self, application_id: &str) -> Result<Vec<OAuthClient>> {
         let client_ids = sqlx::query_scalar::<_, String>(
             "SELECT oauth_client_id FROM oauth_client_application_ids WHERE application_id = $1",

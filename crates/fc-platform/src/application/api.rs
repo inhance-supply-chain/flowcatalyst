@@ -468,12 +468,60 @@ pub async fn delete_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<StatusCode, PlatformError> {
+    use crate::application::operations::{DeleteApplicationCommand, DeleteApplicationUseCase};
+    use crate::service_account::operations::{
+        DeleteServiceAccountCommand, DeleteServiceAccountUseCase,
+    };
+
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
-    let command = DeactivateApplicationCommand { id };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    // Pre-fetch the SAs owned by this application. The SA delete repo
+    // (and migration 027 / 028) handles the rest of the cascade —
+    // `oauth_clients` rows pointing at each SA's principal are deleted
+    // via FK CASCADE, and `app_applications.service_account_id` is
+    // cleared via FK SET NULL.
+    let sas = state.service_account_repo.find_by_application(&id).await?;
 
-    match state.deactivate_use_case.run(command, ctx).await {
+    let principal_id = auth.0.principal_id.clone();
+    let app_id_for_closure = id.clone();
+    let sa_repo = state.service_account_repo.clone();
+    let app_repo = state.application_repo.clone();
+
+    // Single transaction: delete every SA then the application. If any
+    // step fails, everything rolls back (no half-deleted state).
+    let result = state
+        .pg_unit_of_work
+        .run(|session| async move {
+            let delete_sa_uc = DeleteServiceAccountUseCase::new(sa_repo, session.clone());
+            let delete_app_uc = DeleteApplicationUseCase::new(app_repo, session);
+
+            let ctx = ExecutionContext::create(&principal_id);
+
+            for sa in sas {
+                if let Err(e) = delete_sa_uc
+                    .run(
+                        DeleteServiceAccountCommand { id: sa.id.clone() },
+                        ctx.clone(),
+                    )
+                    .await
+                    .into_result()
+                {
+                    return UseCaseResult::failure(e);
+                }
+            }
+
+            delete_app_uc
+                .run(
+                    DeleteApplicationCommand {
+                        application_id: app_id_for_closure,
+                    },
+                    ctx,
+                )
+                .await
+        })
+        .await;
+
+    match result {
         UseCaseResult::Success(_event) => Ok(StatusCode::NO_CONTENT),
         UseCaseResult::Failure(err) => Err(err.into()),
     }
@@ -537,12 +585,96 @@ pub async fn deactivate_application<U: UnitOfWork>(
     auth: Authenticated,
     Path(id): Path<String>,
 ) -> Result<Json<ApplicationResponse>, PlatformError> {
+    use crate::auth::operations::{DeactivateOAuthClientCommand, DeactivateOAuthClientUseCase};
+    use crate::service_account::operations::{
+        DeactivateServiceAccountCommand, DeactivateServiceAccountUseCase,
+    };
+
     crate::shared::authorization_service::checks::require_anchor(&auth.0)?;
 
-    let command = DeactivateApplicationCommand { id: id.clone() };
-    let ctx = ExecutionContext::create(auth.0.principal_id.clone());
+    // Pre-fetch the dependents we'll cascade-deactivate so the work
+    // inside the tx closure stays small. Reads are tolerable outside
+    // the tx — the worst case (someone provisions a new SA mid-call)
+    // gets caught the next time the operator deactivates.
+    let sas = state
+        .service_account_repo
+        .find_by_application(&id)
+        .await?;
+    let mut oauth_clients_to_deactivate: Vec<String> = Vec::new();
+    for sa in &sas {
+        let clients = state
+            .oauth_client_repo
+            .find_by_service_account_principal_id(&sa.id)
+            .await?;
+        oauth_clients_to_deactivate.extend(clients.into_iter().filter(|c| c.active).map(|c| c.id));
+    }
 
-    match state.deactivate_use_case.run(command, ctx).await {
+    let principal_id = auth.0.principal_id.clone();
+    let app_id_for_closure = id.clone();
+    let sa_repo = state.service_account_repo.clone();
+    let oauth_repo = state.oauth_client_repo.clone();
+    let app_repo = state.application_repo.clone();
+
+    // Single transaction: app + SAs + their oauth clients either all
+    // flip to inactive or none do.
+    let result = state
+        .pg_unit_of_work
+        .run(|session| async move {
+            let deactivate_sa_uc =
+                DeactivateServiceAccountUseCase::new(sa_repo, session.clone());
+            let deactivate_oauth_uc =
+                DeactivateOAuthClientUseCase::new(oauth_repo, session.clone());
+            let deactivate_app_uc =
+                crate::application::operations::DeactivateApplicationUseCase::new(
+                    app_repo,
+                    session,
+                );
+
+            let ctx = ExecutionContext::create(&principal_id);
+
+            for sa in sas {
+                if !sa.active {
+                    continue;
+                }
+                if let Err(e) = deactivate_sa_uc
+                    .run(
+                        DeactivateServiceAccountCommand { id: sa.id.clone() },
+                        ctx.clone(),
+                    )
+                    .await
+                    .into_result()
+                {
+                    return UseCaseResult::failure(e);
+                }
+            }
+
+            for oauth_id in oauth_clients_to_deactivate {
+                if let Err(e) = deactivate_oauth_uc
+                    .run(
+                        DeactivateOAuthClientCommand {
+                            oauth_client_id: oauth_id,
+                        },
+                        ctx.clone(),
+                    )
+                    .await
+                    .into_result()
+                {
+                    return UseCaseResult::failure(e);
+                }
+            }
+
+            deactivate_app_uc
+                .run(
+                    DeactivateApplicationCommand {
+                        id: app_id_for_closure,
+                    },
+                    ctx,
+                )
+                .await
+        })
+        .await;
+
+    match result {
         UseCaseResult::Success(_event) => {
             let app = state
                 .application_repo

@@ -161,6 +161,48 @@ impl ServiceAccountDeleted {
     }
 }
 
+/// Event emitted when a service account is deactivated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceAccountDeactivated {
+    #[serde(flatten)]
+    pub metadata: EventMetadata,
+
+    pub service_account_id: String,
+    pub code: String,
+}
+
+impl_domain_event!(ServiceAccountDeactivated);
+
+impl ServiceAccountDeactivated {
+    const EVENT_TYPE: &'static str = "platform:iam:serviceaccount:deactivated";
+    const SPEC_VERSION: &'static str = "1.0";
+    const SOURCE: &'static str = "platform:serviceaccount";
+
+    pub fn new(ctx: &ExecutionContext, service_account_id: &str, code: &str) -> Self {
+        let event_id = TsidGenerator::generate_untyped();
+        let subject = format!("platform.serviceaccount.{}", service_account_id);
+        let message_group = format!("platform:serviceaccount:{}", service_account_id);
+
+        Self {
+            metadata: EventMetadata::new(
+                event_id,
+                Self::EVENT_TYPE,
+                Self::SPEC_VERSION,
+                Self::SOURCE,
+                subject,
+                message_group,
+                ctx.execution_id.clone(),
+                ctx.correlation_id.clone(),
+                ctx.causation_id.clone(),
+                ctx.principal_id.clone(),
+            ),
+            service_account_id: service_account_id.to_string(),
+            code: code.to_string(),
+        }
+    }
+}
+
 /// Event emitted when roles are assigned to a service account.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
