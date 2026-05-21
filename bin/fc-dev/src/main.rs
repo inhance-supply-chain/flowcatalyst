@@ -307,6 +307,12 @@ mod version_check;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env BEFORE Cli::parse() so clap's `#[arg(env = "…")]` fallbacks
+    // pick up values from the project's `.env.development` / `.env`. Without
+    // this, env vars only resolve from the actual shell environment, and the
+    // common case of "I set FC_OUTBOX_TOKEN in .env" silently doesn't work.
+    let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
+
     // Subcommand fast path — handle the ones that don't need a database,
     // env vars, or anything else expensive before booting the dev server.
     let cli = Cli::parse();
@@ -342,15 +348,11 @@ async fn main() -> Result<()> {
             return fresh::run(args).await;
         }
         Some(Command::Outbox(args)) => {
-            let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
             fc_common::logging::init_logging("fc-dev outbox");
             return outbox::run(args).await;
         }
         _ => {}
     }
-
-    // Load .env.development (or .env) if present
-    let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
 
     // Set dev defaults for env vars that aren't set
     // These make fc-dev zero-config (only DB URL needed).

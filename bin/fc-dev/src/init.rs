@@ -504,7 +504,16 @@ fn generate_and_encrypt_secret() -> Result<(String, String)> {
 
 // ─── .env writer ───────────────────────────────────────────────────────
 
-fn write_env_updates(path: &PathBuf, updates: &[(&str, &str)]) -> Result<()> {
+/// Idempotently update `path` so that every `(key, value)` in `updates`
+/// is present. Existing keys are rewritten in place; new keys are
+/// appended under a comment block. Values containing whitespace or
+/// shell-special characters are single-quoted with embedded quotes
+/// escaped. Re-runs with identical input are no-ops.
+///
+/// Exposed `pub(crate)` so the `outbox init` subcommand (and any other
+/// fc-dev subcommand that needs to persist secrets to `.env`) can
+/// reuse it — single source of truth for the .env edit semantics.
+pub(crate) fn write_env_updates(path: &PathBuf, updates: &[(&str, &str)]) -> Result<()> {
     let original = fs::read_to_string(path).unwrap_or_default();
     let mut lines: Vec<String> = if original.is_empty() {
         Vec::new()
