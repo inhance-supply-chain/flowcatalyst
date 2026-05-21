@@ -36,6 +36,10 @@
 		"./effect/usecase": {
 			"types": "./dist/effect/usecase/index.d.ts",
 			"import": "./dist/effect/usecase/index.js"
+		},
+		"./fastify": {
+			"types": "./dist/fastify/index.d.ts",
+			"import": "./dist/fastify/index.js"
 		}
 	},
 	"scripts": {
@@ -52,17 +56,32 @@
 		"neverthrow": "^8.1.1"
 	},
 	"peerDependencies": {
-		"effect": "^4.0.0-beta.70"
+		"@fastify/cookie": "^11.0.0",
+		"effect": "^4.0.0-beta.70",
+		"fastify": "^5.0.0",
+		"jose": "^5.0.0 || ^6.0.0"
 	},
 	"peerDependenciesMeta": {
+		"@fastify/cookie": {
+			"optional": true
+		},
 		"effect": {
+			"optional": true
+		},
+		"fastify": {
+			"optional": true
+		},
+		"jose": {
 			"optional": true
 		}
 	},
 	"devDependencies": {
+		"@fastify/cookie": "^11.0.0",
 		"@hey-api/openapi-ts": "^0.91.1",
 		"@types/node": "^22.0.0",
 		"effect": "^4.0.0-beta.70",
+		"fastify": "^5.0.0",
+		"jose": "^6.0.0",
 		"typescript": "^6.0.0"
 	},
 	"engines": {

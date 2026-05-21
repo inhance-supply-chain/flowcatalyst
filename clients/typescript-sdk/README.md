@@ -154,6 +154,166 @@ full structure guide — how to name roles, the 4-part permission format,
 event-type code conventions, subscription modes, dispatch pool sizing, and
 principal management.
 
+## Fastify integration
+
+If you're running a Fastify app, `@flowcatalyst/sdk/fastify` is a drop-in
+plugin that handles both the browser OIDC flow (redirect + encrypted
+session cookie) and Bearer-token validation for API callers — exposing the
+same `request.principal` on both. Roles come from the FlowCatalyst access
+token; permissions are resolved locally from a catalogue you declare in code.
+
+Optional peer dependencies: `fastify@^5`, `@fastify/cookie`, `jose`. Install
+the ones you need:
+
+```bash
+pnpm add fastify @fastify/cookie jose
+```
+
+```typescript
+import Fastify from "fastify";
+import {
+  flowcatalystAuth,
+  defineRbac,
+  generateSessionSecret,
+} from "@flowcatalyst/sdk/fastify";
+
+const rbac = defineRbac()
+  .role("operant:admin").grants("operant:*")
+  .role("operant:viewer").grants("operant:read")
+  .role("support").grants("ticket:*")
+  .build();
+
+const app = Fastify();
+
+await app.register(flowcatalystAuth, {
+  baseUrl: "https://platform.example.com",
+  clientId: process.env.FC_CLIENT_ID!,
+  clientSecret: process.env.FC_CLIENT_SECRET!,
+  cookie: { secret: process.env.SESSION_SECRET! }, // 32B base64url
+  rbac,
+});
+
+// Web route: 302s to /auth/login if no session cookie.
+app.get("/dashboard", { preHandler: app.fc.requireSession() }, async (req) => {
+  return { hello: req.principal!.name };
+});
+
+// API route: 401 JSON if no valid Bearer token.
+app.post("/api/orders", { preHandler: app.fc.requireBearer() }, async (req) => {
+  if (!req.principal!.hasPermissionTo(["operant:write"])) {
+    throw app.httpErrors.forbidden();
+  }
+  // ...
+});
+
+// Either: redirects browsers, 401s machines.
+app.get("/api/me", { preHandler: app.fc.requireAuth() }, async (req) => ({
+  id: req.principal!.id,
+  roles: req.principal!.roles,
+  permissions: req.principal!.hasAnyPermissionTo(["operant:read"]),
+}));
+```
+
+Generate a session secret with `node -e "console.log(require('@flowcatalyst/sdk/fastify').generateSessionSecret())"`.
+
+### Principal helpers
+
+`request.principal` is the same shape for cookie and Bearer callers:
+
+```typescript
+principal.id;                                    // "prn_..." or service principal id
+principal.scope;                                 // "anchor" | "partner" | "client"
+principal.clients;                               // ["clt_abc", ...] or ["*"] for anchors
+principal.roles;                                 // ["operant:admin", ...]
+principal.applications;                          // ["operant", ...]
+principal.mechanism;                             // "session" | "bearer"
+
+principal.hasRole("operant:admin");              // single
+principal.hasRoles(["a", "b"]);                  // ALL
+principal.hasAnyRole(["a", "b"]);                // ANY
+principal.hasPermissionTo(["operant:read"]);     // ALL (wildcard-aware)
+principal.hasAnyPermissionTo(["a", "b"]);        // ANY (wildcard-aware)
+principal.isAnchor();
+principal.canAccessClient("clt_abc");
+
+principal.sessionData;                           // app's bag, persisted in the session
+```
+
+Permission wildcards use `:` as separator with `*` as a suffix at any
+segment boundary. `operant:*` matches `operant:read` and `operant:reports:export`;
+`*` matches anything. Mid-string globs (e.g. `operant:r*`) are not supported.
+
+### Custom post-auth logic
+
+The plugin doesn't expose a special hook — once it has populated
+`request.principal`, register a normal Fastify `preHandler` to enrich it
+or enforce app-specific checks:
+
+```typescript
+app.addHook("preHandler", async (req) => {
+  if (!req.principal) return;
+  const user = await db.user.upsert({
+    where: { fcId: req.principal.id },
+    update: { lastSeenAt: new Date() },
+    create: { fcId: req.principal.id, email: req.principal.email },
+  });
+  req.principal.sessionData.localUserId = user.id;
+});
+```
+
+For cookie sessions, anything you write to `principal.sessionData` from a
+post-auth hook is **not** persisted automatically — the session is read
+from the store on each request. Persist via `app.fc.logout` / re-issue if
+you need a write path; or use the `PgSessionStore` / `RedisSessionStore`
+backends if you need mutable server-side state.
+
+### Logout
+
+Default is local-only — clear the session cookie. To also terminate the
+OIDC session at the platform, redirect to FlowCatalyst's logout page:
+
+```typescript
+app.post("/auth/logout", async (req, reply) => {
+  await app.fc.logout(req, reply, {
+    redirectTo: "https://platform.example.com/logout",
+  });
+});
+```
+
+### Server-side session storage
+
+The default `CookieSessionStore` puts the encrypted session in the cookie
+itself — zero infra, but limited to ~4KB. Swap to Postgres or Redis once
+you want to store more per-session data or revoke sessions server-side:
+
+```typescript
+import { PgSessionStore, initSessionSchema } from "@flowcatalyst/sdk/fastify";
+import pg from "pg";
+
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+await initSessionSchema(pool);
+
+await app.register(flowcatalystAuth, {
+  // ...
+  sessionStore: new PgSessionStore({
+    executor: pool,
+    cookieName: "fc_session",
+    cookieOptions: {
+      path: "/",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      maxAge: 60 * 60 * 8,
+    },
+  }),
+});
+```
+
+`RedisSessionStore` follows the same shape against an ioredis-compatible
+client. With a server-side store, the cookie contains an opaque session id
+only and the payload (including any size of `sessionData`) lives in the
+backend.
+
 ## Using with Effect
 
 If your project uses [Effect](https://effect.website/), the SDK ships an
