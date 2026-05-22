@@ -96,10 +96,12 @@ async function saveChanges() {
 	if (!client.value) return;
 
 	saving.value = true;
+	const id = client.value.id;
 	try {
-		client.value = await clientsApi.update(client.value.id, {
+		await clientsApi.update(id, {
 			name: editName.value,
 		});
+		await loadClient(id);
 		editing.value = false;
 		toast.success("Success", "Client updated");
 	} catch {

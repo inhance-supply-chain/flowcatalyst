@@ -83,7 +83,7 @@ async function saveChanges() {
 
 	saving.value = true;
 	try {
-		application.value = await applicationsApi.update(id, {
+		await applicationsApi.update(id, {
 			name: editName.value,
 			description: editDescription.value || undefined,
 			defaultBaseUrl: editDefaultBaseUrl.value || undefined,
@@ -92,6 +92,7 @@ async function saveChanges() {
 			logo: editLogo.value || undefined,
 			logoMimeType: editLogoMimeType.value || undefined,
 		});
+		await loadApplication(id);
 		editing.value = false;
 		toast.success("Success", "Application updated");
 	} catch {

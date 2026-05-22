@@ -127,7 +127,7 @@ export const subscriptionsApi = {
 		});
 	},
 
-	update(id: string, data: UpdateSubscriptionRequest): Promise<Subscription> {
+	update(id: string, data: UpdateSubscriptionRequest): Promise<void> {
 		return apiFetch(`/subscriptions/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),

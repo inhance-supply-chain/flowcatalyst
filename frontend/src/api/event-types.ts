@@ -70,7 +70,7 @@ export const eventTypesApi = {
 		});
 	},
 
-	update(id: string, data: UpdateEventTypeRequest): Promise<EventType> {
+	update(id: string, data: UpdateEventTypeRequest): Promise<void> {
 		return bffFetch(`/event-types/${id}`, {
 			method: "PATCH",
 			body: JSON.stringify(data),

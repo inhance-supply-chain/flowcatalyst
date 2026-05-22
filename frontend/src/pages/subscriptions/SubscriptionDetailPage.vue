@@ -80,8 +80,9 @@ async function saveChanges() {
 	if (!subscription.value) return;
 
 	saving.value = true;
+	const id = subscription.value.id;
 	try {
-		subscription.value = await subscriptionsApi.update(subscription.value.id, {
+		await subscriptionsApi.update(id, {
 			name: editName.value,
 			description: editDescription.value || undefined,
 			endpoint: editEndpoint.value,
@@ -93,6 +94,7 @@ async function saveChanges() {
 			timeoutSeconds: editTimeoutSeconds.value || undefined,
 			mode: editMode.value,
 		});
+		await loadSubscription(id);
 		editing.value = false;
 		toast.success("Success", "Subscription updated");
 	} catch {

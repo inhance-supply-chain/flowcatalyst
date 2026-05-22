@@ -119,7 +119,7 @@ export const applicationsApi = {
 		});
 	},
 
-	update(id: string, data: UpdateApplicationRequest): Promise<Application> {
+	update(id: string, data: UpdateApplicationRequest): Promise<void> {
 		return apiFetch(`/applications/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),

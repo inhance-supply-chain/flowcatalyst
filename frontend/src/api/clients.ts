@@ -89,7 +89,7 @@ export const clientsApi = {
 		});
 	},
 
-	update(id: string, data: UpdateClientRequest): Promise<Client> {
+	update(id: string, data: UpdateClientRequest): Promise<void> {
 		return apiFetch(`/clients/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),

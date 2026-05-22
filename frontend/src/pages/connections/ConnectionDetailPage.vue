@@ -59,12 +59,14 @@ async function saveChanges() {
 	if (!connection.value) return;
 
 	saving.value = true;
+	const id = connection.value.id;
 	try {
-		connection.value = await connectionsApi.update(connection.value.id, {
+		await connectionsApi.update(id, {
 			name: editName.value,
 			description: editDescription.value || undefined,
 			externalId: editExternalId.value || undefined,
 		});
+		await loadConnection(id);
 		editing.value = false;
 		toast.success("Success", "Connection updated");
 	} catch {

@@ -372,3 +372,44 @@ or detail page, copy its `<template>` + `<style scoped>` skeleton, and
 fill in the resource-specific bits. Don't invent layout from scratch —
 the visual standard is already in the codebase, and the project ships
 with no Tailwind to fall back on if you reach for it by reflex.
+
+## Frontend API Response Handling
+
+Most of our PUT/PATCH update handlers return **`204 No Content`** — no body.
+The FE `apiFetch` resolves to `undefined` for 204 responses (see
+`frontend/src/api/client.ts`). That means:
+
+```ts
+// ❌ wrong — `thing.value` becomes undefined, every `v-if="thing"` flips
+// false, and the page flashes "Not Found".
+thing.value = await thingsApi.update(id, ...);
+```
+
+```ts
+// ✅ right — call the void method, then refetch from the source of truth.
+await thingsApi.update(id, ...);
+await loadThing(id);
+```
+
+**Convention checklist when adding/modifying an FE API wrapper:**
+
+- If the backend handler signature is
+  `-> Result<StatusCode, …>` returning `NO_CONTENT`, the FE wrapper MUST
+  be typed `Promise<void>`. Don't declare it `Promise<Entity>` and let
+  the type lie — the bug is invisible until users see a "not found"
+  message after a successful save.
+- After calling a void API method, **refetch** with `await loadX(id)`
+  (or whichever loader the page already has). Don't assign the call's
+  result to a reactive ref.
+- If the backend should actually be returning the updated entity, fix
+  the handler to do so (and update the FE wrapper). Either side is
+  valid; mismatched declarations are the bug.
+
+The convention is enforced by
+`frontend/tests/conventions/no-void-api-assignment.test.ts`. It scans
+`src/pages` and `src/components` for `ref.value = await xxxApi.method(...)`
+where `method` is declared `Promise<void>` and fails the build with the
+exact file:line. Run with `pnpm test` from `frontend/`.
+
+For genuinely intentional uses (rare), add a trailing
+`// fc-api-void: ok` comment on the line to opt out.

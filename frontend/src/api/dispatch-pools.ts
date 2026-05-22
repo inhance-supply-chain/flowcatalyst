@@ -74,7 +74,7 @@ export const dispatchPoolsApi = {
 		});
 	},
 
-	update(id: string, data: UpdateDispatchPoolRequest): Promise<DispatchPool> {
+	update(id: string, data: UpdateDispatchPoolRequest): Promise<void> {
 		return apiFetch(`/dispatch-pools/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),

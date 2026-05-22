@@ -61,13 +61,15 @@ async function saveChanges() {
 	if (!pool.value) return;
 
 	saving.value = true;
+	const id = pool.value.id;
 	try {
-		pool.value = await dispatchPoolsApi.update(pool.value.id, {
+		await dispatchPoolsApi.update(id, {
 			name: editName.value,
 			description: editDescription.value || undefined,
 			rateLimit: editRateLimit.value || undefined,
 			concurrency: editConcurrency.value || undefined,
 		});
+		await loadPool(id);
 		editing.value = false;
 		toast.success("Success", "Pool updated");
 	} catch {
