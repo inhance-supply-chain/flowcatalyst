@@ -25,6 +25,66 @@
 //! The client module (feature `client`) provides HTTP operations for managing
 //! event types, subscriptions, connections, and sync operations.
 //!
+//! ## Running Scripts (Rust analogue of `tsx scripts/fc-sync.ts`)
+//!
+//! In the TypeScript SDK you'd add `"fc:sync": "tsx scripts/fc-sync.ts"` to
+//! your `package.json`. The Rust equivalent is **`cargo run --example`**.
+//! Drop a file in `examples/` of any crate that depends on `fc-sdk`:
+//!
+//! ```text
+//! my-app/
+//! ├── Cargo.toml
+//! ├── src/main.rs
+//! └── examples/
+//!     └── fc-sync.rs       # cargo run --example fc-sync
+//! ```
+//!
+//! Cargo auto-discovers everything under `examples/` — no Cargo.toml edit
+//! needed. Wire it to a one-word command via a `justfile` recipe:
+//!
+//! ```text
+//! fc-sync:
+//!     cargo run --example fc-sync --features client
+//! ```
+//!
+//! Now `just fc-sync` is the Rust analogue of `pnpm fc:sync`.
+//!
+//! ### Performance tiers
+//!
+//! | Scenario                                  | Time        |
+//! |-------------------------------------------|-------------|
+//! | Cold (deps not built)                     | 30s–2min    |
+//! | Warm `cargo run`, script unchanged        | ~200–500ms  |
+//! | Pre-built binary invoked directly         | ~10–50ms    |
+//!
+//! For scripts you run dozens of times during dev, build once and invoke
+//! the binary directly:
+//!
+//! ```bash
+//! cargo build --release --example fc-sync --features client
+//! ./target/release/examples/fc-sync     # native startup, no cargo tax
+//! ```
+//!
+//! ### Worked examples in this crate
+//!
+//! Three examples ship with the SDK and double as documentation. Each is
+//! a self-contained, runnable Rust file:
+//!
+//! - **`examples/fc-sync.rs`** — push roles, event types, and subscriptions
+//!   for an application. The direct analogue of the TypeScript
+//!   `"fc:sync"` pattern.
+//!     `cargo run --example fc-sync --features client`
+//! - **`examples/list-event-types.rs`** — smallest possible smoke test of
+//!   the API client. Lists event types currently registered on the
+//!   platform.
+//!     `cargo run --example list-event-types --features client`
+//! - **`examples/scheduled-jobs-runner.rs`** — end-to-end Axum server
+//!   hosting a [`scheduled_jobs::ScheduledJobRunner`] with two handlers,
+//!   memory-backed concurrency lock, and on-error hook.
+//!     `cargo run --example scheduled-jobs-runner --features scheduled-jobs-runner,axum`
+//!
+//! All three read `FC_BASE_URL` and `FC_TOKEN` from the environment.
+//!
 //! ## Quick Start
 //!
 //! ```ignore
