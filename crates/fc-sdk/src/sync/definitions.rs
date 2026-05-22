@@ -7,12 +7,12 @@
 //! All structs ship `make(...)` plus a chain of `with_*` builders so they can
 //! be assembled inline at the call site.
 
+use crate::client::dispatch_pools::SyncDispatchPoolItem;
+use crate::client::principals::SyncPrincipalItem;
 use crate::client::processes::SyncProcessInput;
+use crate::client::roles::SyncRoleItem;
 use crate::client::scheduled_jobs::SyncScheduledJobItem;
-use crate::client::sync::{
-    SyncDispatchPoolItem, SyncEventTypeBinding, SyncPrincipalItem, SyncRoleItem,
-    SyncSubscriptionItem,
-};
+use crate::client::subscriptions::{SyncEventTypeBinding, SyncSubscriptionItem};
 use crate::client::CreateEventTypeRequest;
 
 // ───────────────────────────────────────────────────────────────────────────

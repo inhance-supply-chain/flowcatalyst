@@ -104,6 +104,9 @@ pub mod auth;
 #[cfg(feature = "webhook")]
 pub mod webhook;
 
+#[cfg(feature = "scheduled-jobs-runner")]
+pub mod scheduled_jobs;
+
 // Re-export key types at crate root
 pub use tsid::{EntityType, TsidGenerator};
 pub use usecase::{

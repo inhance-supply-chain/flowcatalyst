@@ -16,6 +16,10 @@ auth = ["dep:reqwest", "dep:jsonwebtoken", "dep:sha2", "dep:base64", "dep:rand"]
 # Axum integration for `auth` — extractors, middleware, RBAC catalogue,
 # AES-GCM cookie session storage, and OIDC login/callback handlers.
 axum = ["auth", "dep:axum", "dep:axum-extra", "dep:tower", "dep:aes-gcm", "dep:urlencoding", "dep:bytes", "dep:time"]
+# Server-side session storage for `axum` (in addition to the default
+# AES-GCM cookie store). Opt in with the backend you want.
+axum-session-postgres = ["axum", "dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
+axum-session-redis = ["axum", "dep:redis"]
 webhook = ["dep:hmac", "dep:sha2", "dep:hex"]
 
 # Cache primitive — Memory backend ships with the `cache` feature; the
@@ -28,6 +32,11 @@ cache-redis = ["cache", "dep:redis"]
 lock = ["dep:uuid"]
 lock-postgres = ["lock", "dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
 lock-redis = ["lock", "dep:redis"]
+
+# Scheduled-job runner — consumer-side dispatch + lock + completion callback.
+# Requires `client` (for log/complete callbacks) and `lock` (for concurrency
+# control on `concurrent: false` jobs).
+scheduled-jobs-runner = ["client", "lock"]
 
 [dependencies]
 # Core (always included)
