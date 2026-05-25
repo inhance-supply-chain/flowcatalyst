@@ -63,6 +63,10 @@ class OAuthClientResponse extends \ArrayObject
     /**
      * @var list<string>|null
      */
+    protected $postLogoutRedirectUris;
+    /**
+     * @var list<string>|null
+     */
     protected $redirectUris;
     /**
      * @var string|null
@@ -286,6 +290,24 @@ class OAuthClientResponse extends \ArrayObject
     {
         $this->initialized['pkceRequired'] = true;
         $this->pkceRequired = $pkceRequired;
+        return $this;
+    }
+    /**
+     * @return list<string>|null
+     */
+    public function getPostLogoutRedirectUris(): ?array
+    {
+        return $this->postLogoutRedirectUris;
+    }
+    /**
+     * @param list<string>|null $postLogoutRedirectUris
+     *
+     * @return self
+     */
+    public function setPostLogoutRedirectUris(?array $postLogoutRedirectUris): self
+    {
+        $this->initialized['postLogoutRedirectUris'] = true;
+        $this->postLogoutRedirectUris = $postLogoutRedirectUris;
         return $this;
     }
     /**

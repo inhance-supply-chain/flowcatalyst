@@ -731,6 +731,10 @@ export type CreateOAuthClientRequest = {
      */
     pkceRequired?: boolean | null;
     /**
+     * Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+     */
+    postLogoutRedirectUris?: Array<string>;
+    /**
      * Allowed redirect URIs
      */
     redirectUris?: Array<string>;
@@ -1494,6 +1498,7 @@ export type OAuthClientResponse = {
     grantTypes: Array<string>;
     id: string;
     pkceRequired: boolean;
+    postLogoutRedirectUris?: Array<string>;
     redirectUris: Array<string>;
     serviceAccountPrincipalId?: string | null;
     updatedAt: string;
@@ -2340,6 +2345,10 @@ export type UpdateOAuthClientRequest = {
      * Whether PKCE is required
      */
     pkceRequired?: boolean | null;
+    /**
+     * Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+     */
+    postLogoutRedirectUris?: Array<string> | null;
     /**
      * Allowed redirect URIs
      */

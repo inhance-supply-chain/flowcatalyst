@@ -37,6 +37,10 @@
 			"types": "./dist/effect/usecase/index.d.ts",
 			"import": "./dist/effect/usecase/index.js"
 		},
+		"./usecase": {
+			"types": "./dist/usecase/index.d.ts",
+			"import": "./dist/usecase/index.js"
+		},
 		"./fastify": {
 			"types": "./dist/fastify/index.d.ts",
 			"import": "./dist/fastify/index.js"

@@ -49,6 +49,12 @@ class UpdateOAuthClientRequest extends \ArrayObject
      */
     protected $pkceRequired;
     /**
+     * Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+     *
+     * @var list<string>|null
+     */
+    protected $postLogoutRedirectUris;
+    /**
      * Allowed redirect URIs
      *
      * @var list<string>|null
@@ -184,6 +190,28 @@ class UpdateOAuthClientRequest extends \ArrayObject
     {
         $this->initialized['pkceRequired'] = true;
         $this->pkceRequired = $pkceRequired;
+        return $this;
+    }
+    /**
+     * Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+     *
+     * @return list<string>|null
+     */
+    public function getPostLogoutRedirectUris(): ?array
+    {
+        return $this->postLogoutRedirectUris;
+    }
+    /**
+     * Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+     *
+     * @param list<string>|null $postLogoutRedirectUris
+     *
+     * @return self
+     */
+    public function setPostLogoutRedirectUris(?array $postLogoutRedirectUris): self
+    {
+        $this->initialized['postLogoutRedirectUris'] = true;
+        $this->postLogoutRedirectUris = $postLogoutRedirectUris;
         return $this;
     }
     /**

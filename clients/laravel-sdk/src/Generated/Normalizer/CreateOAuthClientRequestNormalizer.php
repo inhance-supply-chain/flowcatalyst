@@ -90,20 +90,31 @@ class CreateOAuthClientRequestNormalizer implements DenormalizerInterface, Norma
         elseif (\array_key_exists('pkceRequired', $data) && $data['pkceRequired'] === null) {
             $object->setPkceRequired(null);
         }
-        if (\array_key_exists('redirectUris', $data) && $data['redirectUris'] !== null) {
+        if (\array_key_exists('postLogoutRedirectUris', $data) && $data['postLogoutRedirectUris'] !== null) {
             $values_2 = [];
-            foreach ($data['redirectUris'] as $value_2) {
+            foreach ($data['postLogoutRedirectUris'] as $value_2) {
                 $values_2[] = $value_2;
             }
-            $object->setRedirectUris($values_2);
+            $object->setPostLogoutRedirectUris($values_2);
+            unset($data['postLogoutRedirectUris']);
+        }
+        elseif (\array_key_exists('postLogoutRedirectUris', $data) && $data['postLogoutRedirectUris'] === null) {
+            $object->setPostLogoutRedirectUris(null);
+        }
+        if (\array_key_exists('redirectUris', $data) && $data['redirectUris'] !== null) {
+            $values_3 = [];
+            foreach ($data['redirectUris'] as $value_3) {
+                $values_3[] = $value_3;
+            }
+            $object->setRedirectUris($values_3);
             unset($data['redirectUris']);
         }
         elseif (\array_key_exists('redirectUris', $data) && $data['redirectUris'] === null) {
             $object->setRedirectUris(null);
         }
-        foreach ($data as $key => $value_3) {
+        foreach ($data as $key => $value_4) {
             if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_3;
+                $object[$key] = $value_4;
             }
         }
         return $object;
@@ -135,16 +146,23 @@ class CreateOAuthClientRequestNormalizer implements DenormalizerInterface, Norma
         if ($data->isInitialized('pkceRequired')) {
             $dataArray['pkceRequired'] = $data->getPkceRequired();
         }
-        if ($data->isInitialized('redirectUris') && null !== $data->getRedirectUris()) {
+        if ($data->isInitialized('postLogoutRedirectUris') && null !== $data->getPostLogoutRedirectUris()) {
             $values_2 = [];
-            foreach ($data->getRedirectUris() as $value_2) {
+            foreach ($data->getPostLogoutRedirectUris() as $value_2) {
                 $values_2[] = $value_2;
             }
-            $dataArray['redirectUris'] = $values_2;
+            $dataArray['postLogoutRedirectUris'] = $values_2;
         }
-        foreach ($data as $key => $value_3) {
+        if ($data->isInitialized('redirectUris') && null !== $data->getRedirectUris()) {
+            $values_3 = [];
+            foreach ($data->getRedirectUris() as $value_3) {
+                $values_3[] = $value_3;
+            }
+            $dataArray['redirectUris'] = $values_3;
+        }
+        foreach ($data as $key => $value_4) {
             if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_3;
+                $dataArray[$key] = $value_4;
             }
         }
         return $dataArray;
