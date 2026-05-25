@@ -1,0 +1,12 @@
+# Built example binaries — `go build ./examples/...` from this dir
+# drops the executables here by default. Match each example program
+# name so they never get re-staged.
+/fc-sync
+/list-event-types
+/order-service
+/scheduled-jobs-runner
+/webhook-receiver
+
+# General Go build artefacts.
+*.test
+*.out
