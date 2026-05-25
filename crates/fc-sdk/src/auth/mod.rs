@@ -57,8 +57,14 @@
 //! // 3. Refresh when needed
 //! let new_tokens = oauth.refresh_token(&tokens.refresh_token.unwrap()).await?;
 //!
-//! // 4. Logout
-//! let logout_url = oauth.logout_url(Some("https://myapp.example.com"), None);
+//! // 4. Logout — id_token_hint is required when post_logout_redirect_uri
+//! // is supplied (FlowCatalyst uses it to verify the redirect against the
+//! // client's registered postLogoutRedirectUris).
+//! let logout_url = oauth.logout_url(
+//!     Some("https://myapp.example.com"),
+//!     Some(&tokens.id_token.unwrap()),
+//!     None,
+//! );
 //! ```
 
 pub mod claims;

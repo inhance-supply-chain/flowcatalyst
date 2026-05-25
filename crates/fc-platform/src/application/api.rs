@@ -849,6 +849,7 @@ pub async fn provision_service_account<U: UnitOfWork>(
                 client_type: OAuthClientType::Confidential.as_str().to_string(),
                 client_secret_ref: Some(format!("encrypted:{}", client_secret_ref)),
                 redirect_uris: Vec::new(),
+                post_logout_redirect_uris: Vec::new(),
                 grant_types: vec![GrantType::ClientCredentials.as_str().to_string()],
                 default_scopes: Vec::new(),
                 pkce_required: false,
@@ -977,6 +978,7 @@ pub async fn provision_login_client<U: UnitOfWork>(
         client_type: client_type.as_str().to_string(),
         client_secret_ref,
         redirect_uris: req.redirect_uris.clone(),
+        post_logout_redirect_uris: Vec::new(),
         grant_types: vec![GrantType::AuthorizationCode.as_str().to_string()],
         default_scopes: vec![
             "openid".to_string(),

@@ -39,6 +39,10 @@ pub struct CreateOAuthClientRequest {
     #[serde(default)]
     pub redirect_uris: Vec<String>,
 
+    /// Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+    #[serde(default)]
+    pub post_logout_redirect_uris: Vec<String>,
+
     /// Allowed grant types
     #[serde(default)]
     pub grant_types: Vec<String>,
@@ -61,6 +65,9 @@ pub struct UpdateOAuthClientRequest {
 
     /// Allowed redirect URIs
     pub redirect_uris: Option<Vec<String>>,
+
+    /// Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+    pub post_logout_redirect_uris: Option<Vec<String>>,
 
     /// Allowed grant types
     pub grant_types: Option<Vec<String>>,
@@ -87,6 +94,8 @@ pub struct OAuthClientResponse {
     pub client_name: String,
     pub client_type: String,
     pub redirect_uris: Vec<String>,
+    #[serde(default)]
+    pub post_logout_redirect_uris: Vec<String>,
     pub grant_types: Vec<String>,
     pub default_scopes: Vec<String>,
     pub pkce_required: bool,
@@ -110,6 +119,7 @@ impl From<OAuthClient> for OAuthClientResponse {
             client_name: c.client_name,
             client_type: format!("{:?}", c.client_type).to_uppercase(),
             redirect_uris: c.redirect_uris,
+            post_logout_redirect_uris: c.post_logout_redirect_uris,
             grant_types: c
                 .grant_types
                 .iter()
@@ -263,6 +273,7 @@ pub async fn create_oauth_client(
         client_type,
         client_secret_ref,
         redirect_uris: req.redirect_uris,
+        post_logout_redirect_uris: req.post_logout_redirect_uris,
         grant_types,
         default_scopes: vec![],
         pkce_required: req
@@ -386,6 +397,7 @@ pub async fn update_oauth_client(
         oauth_client_id: id,
         client_name: req.client_name,
         redirect_uris: req.redirect_uris,
+        post_logout_redirect_uris: req.post_logout_redirect_uris,
         grant_types: req.grant_types,
         pkce_required: req.pkce_required,
         application_ids: req.application_ids,

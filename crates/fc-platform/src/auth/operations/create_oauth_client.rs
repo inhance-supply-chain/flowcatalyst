@@ -24,6 +24,8 @@ pub struct CreateOAuthClientCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_secret_ref: Option<String>,
     pub redirect_uris: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub post_logout_redirect_uris: Vec<String>,
     pub grant_types: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub default_scopes: Vec<String>,
@@ -118,6 +120,7 @@ impl<U: UnitOfWork> UseCase for CreateOAuthClientUseCase<U> {
         client.client_type = OAuthClientType::from_str(&command.client_type);
         client.client_secret_ref = command.client_secret_ref.clone();
         client.redirect_uris = command.redirect_uris.clone();
+        client.post_logout_redirect_uris = command.post_logout_redirect_uris.clone();
         client.grant_types = command
             .grant_types
             .iter()

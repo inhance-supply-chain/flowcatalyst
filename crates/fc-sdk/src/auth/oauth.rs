@@ -343,9 +343,17 @@ impl OAuthClient {
     /// Build the RP-Initiated Logout URL.
     ///
     /// Redirect the user to this URL to end their session at FlowCatalyst.
+    ///
+    /// When `post_logout_redirect_uri` is set, you must also pass the
+    /// user's `id_token` as `id_token_hint` — FlowCatalyst uses its `aud`
+    /// claim to identify the client and verify the URI against that
+    /// client's registered `postLogoutRedirectUris` (OIDC RP-Initiated
+    /// Logout 1.0 §2). Omitting the hint causes the OP to refuse the
+    /// redirect.
     pub fn logout_url(
         &self,
         post_logout_redirect_uri: Option<&str>,
+        id_token_hint: Option<&str>,
         state: Option<&str>,
     ) -> String {
         let base = self.config.issuer_url.trim_end_matches('/');
@@ -354,6 +362,9 @@ impl OAuthClient {
         let mut params = Vec::new();
         if let Some(uri) = post_logout_redirect_uri {
             params.push(format!("post_logout_redirect_uri={}", urlencoded(uri)));
+        }
+        if let Some(hint) = id_token_hint {
+            params.push(format!("id_token_hint={}", urlencoded(hint)));
         }
         if let Some(s) = state {
             params.push(format!("state={}", urlencoded(s)));
@@ -567,21 +578,22 @@ mod tests {
             ..OAuthConfig::default()
         });
 
-        let url = client.logout_url(None, None);
+        let url = client.logout_url(None, None, None);
         assert_eq!(url, "https://auth.example.com/auth/oidc/session/end");
     }
 
     #[test]
-    fn logout_url_with_redirect() {
+    fn logout_url_with_redirect_and_hint() {
         let client = OAuthClient::new(OAuthConfig {
             issuer_url: "https://auth.example.com".to_string(),
             client_id: "app".to_string(),
             ..OAuthConfig::default()
         });
 
-        let url = client.logout_url(Some("https://myapp.com"), None);
+        let url = client.logout_url(Some("https://myapp.com"), Some("eyJ.hint.sig"), None);
         assert!(url.contains("post_logout_redirect_uri="));
         assert!(url.contains("myapp.com"));
+        assert!(url.contains("id_token_hint="));
     }
 
     #[test]
@@ -592,20 +604,21 @@ mod tests {
             ..OAuthConfig::default()
         });
 
-        let url = client.logout_url(None, Some("my-state"));
+        let url = client.logout_url(None, None, Some("my-state"));
         assert!(url.contains("state=my-state"));
     }
 
     #[test]
-    fn logout_url_with_both_params() {
+    fn logout_url_with_all_params() {
         let client = OAuthClient::new(OAuthConfig {
             issuer_url: "https://auth.example.com/".to_string(),
             client_id: "app".to_string(),
             ..OAuthConfig::default()
         });
 
-        let url = client.logout_url(Some("https://myapp.com"), Some("s1"));
+        let url = client.logout_url(Some("https://myapp.com"), Some("eyJ.hint.sig"), Some("s1"));
         assert!(url.contains("post_logout_redirect_uri="));
+        assert!(url.contains("id_token_hint="));
         assert!(url.contains("state=s1"));
         assert!(url.contains('&'));
     }

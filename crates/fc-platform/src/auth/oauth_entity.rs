@@ -87,6 +87,12 @@ pub struct OAuthClient {
     #[serde(default)]
     pub redirect_uris: Vec<String>,
 
+    /// Allowed post-logout redirect URIs (OIDC RP-Initiated Logout 1.0).
+    /// Validated against the same `matches_redirect_uri` matcher as
+    /// `redirect_uris` — exact match or single-segment `*` wildcard.
+    #[serde(default)]
+    pub post_logout_redirect_uris: Vec<String>,
+
     /// Allowed grant types
     #[serde(default)]
     pub grant_types: Vec<GrantType>,
@@ -137,6 +143,7 @@ impl OAuthClient {
             client_type: OAuthClientType::Public,
             client_secret_ref: None,
             redirect_uris: vec![],
+            post_logout_redirect_uris: vec![],
             grant_types: vec![GrantType::AuthorizationCode],
             default_scopes: vec![],
             pkce_required: true,

@@ -37,7 +37,7 @@ use crate::usecase::ExecutionContext;
 use crate::UserScope;
 use crate::{
     AnchorDomainRepository, EmailDomainMappingRepository, IdentityProviderRepository,
-    OidcLoginStateRepository, PgUnitOfWork, UnitOfWork,
+    OAuthClientRepository, OidcLoginStateRepository, PgUnitOfWork, UnitOfWork,
 };
 use crate::{AuthService, OidcSyncService};
 
@@ -52,6 +52,10 @@ pub struct OidcLoginApiState {
     pub auth_service: Arc<AuthService>,
     pub jwks_cache: Arc<JwksCache>,
     pub unit_of_work: Arc<PgUnitOfWork>,
+    /// Needed by `/auth/oidc/session/end` to look up the caller's registered
+    /// `post_logout_redirect_uris` whitelist (OIDC RP-Initiated Logout 1.0
+    /// §2). The client is identified by the `aud` claim of `id_token_hint`.
+    pub oauth_client_repo: Arc<OAuthClientRepository>,
     /// External base URL for callbacks (e.g., "https://platform.example.com")
     pub external_base_url: Option<String>,
     /// Session cookie settings
@@ -64,6 +68,7 @@ pub struct OidcLoginApiState {
 }
 
 impl OidcLoginApiState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         anchor_domain_repo: Arc<AnchorDomainRepository>,
         identity_provider_repo: Arc<IdentityProviderRepository>,
@@ -72,6 +77,7 @@ impl OidcLoginApiState {
         oidc_sync_service: Arc<OidcSyncService>,
         auth_service: Arc<AuthService>,
         unit_of_work: Arc<PgUnitOfWork>,
+        oauth_client_repo: Arc<OAuthClientRepository>,
     ) -> Self {
         Self {
             anchor_domain_repo,
@@ -82,6 +88,7 @@ impl OidcLoginApiState {
             auth_service,
             jwks_cache: Arc::new(JwksCache::default()),
             unit_of_work,
+            oauth_client_repo,
             external_base_url: None,
             session_cookie_name: "fc_session".to_string(),
             session_cookie_secure: true,
@@ -1504,37 +1511,54 @@ pub async fn session_end(
         }
     }
 
-    // Redirect to post-logout URI if provided
+    // Redirect to post-logout URI if provided.
+    //
+    // Per OIDC RP-Initiated Logout 1.0 §2, "If a post_logout_redirect_uri
+    // parameter value is supplied, the OP MUST verify the supplied URI is in
+    // the list registered for that Client." We identify the client via the
+    // `aud` claim of `id_token_hint`. If we can't identify the client, we
+    // can't verify the URI — refuse to redirect rather than fall back to a
+    // heuristic that allows attacker-owned HTTPS subdomains (CWE-601).
     if let Some(ref redirect_uri) = params.post_logout_redirect_uri {
-        // P2-7: Validate post_logout_redirect_uri to prevent open redirect attacks.
-        // Must be HTTPS (or localhost for dev) and not contain suspicious patterns.
-        let is_localhost = redirect_uri.starts_with("http://localhost")
-            || redirect_uri.starts_with("http://127.0.0.1");
-        let is_https = redirect_uri.starts_with("https://");
-        if !is_https && !is_localhost {
-            warn!(redirect_uri = %redirect_uri, "Rejected post_logout_redirect_uri: not HTTPS");
-            return (
-                jar,
+        let reject = |reason: &str| -> Response {
+            warn!(redirect_uri = %redirect_uri, reason, "Rejected post_logout_redirect_uri");
+            (
+                jar.clone(),
                 (
                     StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": "invalid_request", "error_description": "post_logout_redirect_uri must use HTTPS"})),
+                    Json(serde_json::json!({
+                        "error": "invalid_request",
+                        "error_description": format!("Invalid post_logout_redirect_uri: {}", reason)
+                    })),
                 ),
-            ).into_response();
+            )
+                .into_response()
+        };
+
+        let Some(ref token_hint) = params.id_token_hint else {
+            return reject("id_token_hint is required to verify post_logout_redirect_uri");
+        };
+
+        let Some(client_id) = extract_aud_from_id_token_hint(token_hint) else {
+            return reject("id_token_hint is malformed");
+        };
+
+        let client = match state.oauth_client_repo.find_by_client_id(&client_id).await {
+            Ok(Some(c)) => c,
+            Ok(None) => return reject("id_token_hint audience does not match any registered client"),
+            Err(e) => {
+                error!(error = %e, "Failed to look up client for post_logout_redirect_uri check");
+                return reject("internal error verifying client");
+            }
+        };
+
+        if !crate::auth::oauth_api::matches_redirect_uri(
+            redirect_uri,
+            &client.post_logout_redirect_uris,
+        ) {
+            return reject("not in the client's registered post_logout_redirect_uris");
         }
-        // Reject URIs with suspicious patterns (embedded credentials, javascript:, data:, etc.)
-        if redirect_uri.contains('@')
-            || redirect_uri.contains("javascript:")
-            || redirect_uri.contains("data:")
-        {
-            warn!(redirect_uri = %redirect_uri, "Rejected post_logout_redirect_uri: suspicious pattern");
-            return (
-                jar,
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": "invalid_request", "error_description": "Invalid post_logout_redirect_uri"})),
-                ),
-            ).into_response();
-        }
+
         let mut url = redirect_uri.clone();
         if let Some(ref s) = params.state {
             let separator = if url.contains('?') { "&" } else { "?" };
@@ -1553,6 +1577,31 @@ pub async fn session_end(
         ),
     )
         .into_response()
+}
+
+/// Best-effort extraction of the `aud` (client_id) claim from an
+/// `id_token_hint`. The hint is used only to identify which client's
+/// `post_logout_redirect_uris` whitelist to consult — the whitelist itself
+/// is the security boundary, so we deliberately do **not** verify the JWT
+/// signature here. Returns `None` for any structural malformation; the
+/// caller treats `None` as "cannot identify client" and refuses the
+/// redirect.
+fn extract_aud_from_id_token_hint(token: &str) -> Option<String> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
+    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
+    // OIDC Core §2: `aud` is a string OR array of strings. When an array, the
+    // first entry is the audience this token was minted for.
+    match payload.get("aud") {
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(serde_json::Value::Array(arr)) => {
+            arr.first().and_then(|v| v.as_str()).map(String::from)
+        }
+        _ => None,
+    }
 }
 
 /// Create the OIDC login router

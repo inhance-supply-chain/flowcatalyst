@@ -400,6 +400,7 @@ pub async fn create_service_account<U: UnitOfWork>(
                 client_type: "CONFIDENTIAL".to_string(),
                 client_secret_ref: Some(format!("encrypted:{}", encrypted)),
                 redirect_uris: vec![],
+                post_logout_redirect_uris: vec![],
                 grant_types: vec![
                     "client_credentials".to_string(),
                     "authorization_code".to_string(),

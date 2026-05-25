@@ -13,6 +13,7 @@ export interface OAuthClient {
 	clientName: string;
 	clientType: ClientType;
 	redirectUris: string[];
+	postLogoutRedirectUris: string[];
 	allowedOrigins: string[];
 	grantTypes: string[];
 	defaultScopes: string[];
@@ -33,6 +34,7 @@ export interface CreateOAuthClientRequest {
 	clientName: string;
 	clientType: ClientType;
 	redirectUris: string[];
+	postLogoutRedirectUris?: string[];
 	allowedOrigins?: string[];
 	grantTypes: string[];
 	defaultScopes?: string;
@@ -43,6 +45,7 @@ export interface CreateOAuthClientRequest {
 export interface UpdateOAuthClientRequest {
 	clientName?: string;
 	redirectUris?: string[];
+	postLogoutRedirectUris?: string[];
 	allowedOrigins?: string[];
 	grantTypes?: string[];
 	defaultScopes?: string[];
@@ -90,7 +93,7 @@ export const oauthClientsApi = {
 		});
 	},
 
-	update(id: string, data: UpdateOAuthClientRequest): Promise<OAuthClient> {
+	update(id: string, data: UpdateOAuthClientRequest): Promise<void> {
 		return apiFetch(`/oauth-clients/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
