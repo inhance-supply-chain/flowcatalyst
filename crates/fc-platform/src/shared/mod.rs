@@ -34,8 +34,11 @@ pub mod well_known_api;
 // Server setup helpers (shared across fc-server, fc-platform-server, fc-dev)
 pub mod server_setup;
 
-// Per-IP rate limit middleware
+// Per-IP rate limit middleware (in-memory, per-instance)
 pub mod rate_limit_middleware;
+
+// Distributed rate-limit store (Redis when available, Postgres fallback)
+pub mod rate_limit_store;
 
 // Services
 pub mod authorization_service;

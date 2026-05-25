@@ -113,6 +113,9 @@ use crate::shared::bff_developer_api::{bff_developer_router, BffDeveloperState};
 use crate::shared::rate_limit_middleware::{
     rate_limit_per_ip, IpRateLimiterState, RateLimitConfig,
 };
+use crate::shared::rate_limit_store::{
+    distributed_rate_limit_per_ip, Bucket, DistributedIpLimitState,
+};
 use crate::usecase::UnitOfWork;
 use std::sync::Arc;
 
@@ -279,6 +282,12 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     /// - SPA fallback (index.html) for unmatched GET requests
     /// - Explicit SPA routes for paths that conflict with API nests (e.g., /auth/login)
     pub static_dir: Option<String>,
+
+    /// Distributed rate-limit store (Redis when reachable, Postgres
+    /// fallback). Used to enforce cluster-wide per-IP + per-`client_id`
+    /// limits on the OAuth/auth edge — see `RateLimitPolicies`.
+    pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
+    pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
 }
 
 impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
@@ -297,6 +306,29 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             IpRateLimiterState::new(&RateLimitConfig::oauth_token_default_from_env());
         let auth_layer = axum::middleware::from_fn_with_state(auth_ip_limit, rate_limit_per_ip);
         let oauth_layer = axum::middleware::from_fn_with_state(oauth_ip_limit, rate_limit_per_ip);
+
+        // Distributed (cluster-wide) per-IP limiters layered on top of the
+        // in-memory governor above. The two compose: governor rejects bursts
+        // at this instance (sub-ms, no I/O), the distributed store catches a
+        // single source spreading load across replicas. One layer per
+        // (bucket, policy) so each route group's limits can be tuned
+        // independently via env.
+        let distributed_oauth_token_layer = axum::middleware::from_fn_with_state(
+            DistributedIpLimitState {
+                store: self.rate_limit_store.clone(),
+                bucket: Bucket::OAUTH_TOKEN_IP,
+                policy: self.rate_limit_policies.oauth_token_ip,
+            },
+            distributed_rate_limit_per_ip,
+        );
+        let distributed_password_reset_layer = axum::middleware::from_fn_with_state(
+            DistributedIpLimitState {
+                store: self.rate_limit_store.clone(),
+                bucket: Bucket::PASSWORD_RESET_IP,
+                policy: self.rate_limit_policies.password_reset_ip,
+            },
+            distributed_rate_limit_per_ip,
+        );
 
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
         let (router, mut openapi) = OpenApiRouter::new()
@@ -527,7 +559,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             .nest(
                 PATH_OAUTH,
-                oauth_router(self.oauth).layer(oauth_layer.clone()),
+                oauth_router(self.oauth)
+                    .layer(distributed_oauth_token_layer)
+                    .layer(oauth_layer.clone()),
             )
             .nest(PATH_WELL_KNOWN, well_known_router(self.well_known))
             .nest(
@@ -536,7 +570,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             .nest(
                 PATH_AUTH_PASSWORD_RESET,
-                password_reset_router(self.password_reset).layer(auth_layer.clone()),
+                password_reset_router(self.password_reset)
+                    .layer(distributed_password_reset_layer)
+                    .layer(auth_layer.clone()),
             )
             // Batch ingest endpoints (merged into resource routers)
             .nest(PATH_API_EVENTS, sdk_events_batch_router(self.sdk_events))

@@ -351,6 +351,35 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("platform application row missing after seeding"))?
         .id;
 
+    // Distributed rate-limit store (Redis when FC_REDIS_URL is reachable,
+    // Postgres fallback). Constructed once here so the choice is logged at
+    // startup, then handed to the platform router builder.
+    let rate_limit_store =
+        fc_platform::shared::rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
+    let rate_limit_policies = Arc::new(
+        fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
+    );
+
+    // Hourly prune of the Postgres rate-limit table (no-op for Redis — TTLs
+    // age keys out automatically). Keeps row count bounded at peak-QPS ×
+    // max-policy-window.
+    {
+        let store = rate_limit_store.clone();
+        let max_window = rate_limit_policies.max_window();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            tick.tick().await; // skip the immediate-fire tick
+            loop {
+                tick.tick().await;
+                match store.prune(max_window).await {
+                    Ok(n) if n > 0 => tracing::debug!(rows = n, "rate_limit_events prune"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "rate_limit_events prune failed"),
+                }
+            }
+        });
+    }
+
     // ── Build HTTP app ───────────────────────────────────────────────────────
     let app = if platform_enabled {
         build_platform_app(
@@ -361,6 +390,8 @@ async fn main() -> Result<()> {
             &cors_origins_cache,
             standby_enabled,
             platform_application_id,
+            rate_limit_store.clone(),
+            rate_limit_policies.clone(),
         )
     } else {
         // Minimal app with just health + metrics
@@ -548,6 +579,7 @@ async fn main() -> Result<()> {
 
 // ── Platform App Builder ─────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn build_platform_app(
     api_port: u16,
     auth_services: &fc_platform::shared::server_setup::AuthServices,
@@ -556,6 +588,8 @@ fn build_platform_app(
     cors_origins_cache: &Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     _standby_enabled: bool,
     platform_application_id: String,
+    rate_limit_store: Arc<dyn fc_platform::shared::rate_limit_store::RateLimitStore>,
+    rate_limit_policies: Arc<fc_platform::shared::rate_limit_store::RateLimitPolicies>,
 ) -> Router {
     let app_state = AppState {
         auth_service: auth_services.auth.clone(),
@@ -568,6 +602,8 @@ fn build_platform_app(
         auth_services,
         unit_of_work,
         fc_platform::shared::server_setup::PlatformRoutesConfig {
+            rate_limit_store,
+            rate_limit_policies,
             session_cookie_secure: true,
             session_cookie_same_site: std::env::var("FC_SESSION_COOKIE_SAME_SITE")
                 .unwrap_or_else(|_| fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string()),

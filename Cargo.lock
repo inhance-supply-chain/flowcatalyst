@@ -2473,6 +2473,7 @@ dependencies = [
  "openssl",
  "parking_lot 0.12.5",
  "rand 0.9.2",
+ "redis",
  "regex",
  "reqwest",
  "rsa",

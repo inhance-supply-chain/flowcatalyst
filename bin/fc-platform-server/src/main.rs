@@ -176,12 +176,41 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("platform application row missing after seeding"))?
         .id;
 
+    // Distributed rate-limit store (Redis when FC_REDIS_URL is reachable,
+    // Postgres fallback). Logged at startup so ops can confirm which backend
+    // is active.
+    let rate_limit_store =
+        fc_platform::shared::rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
+    let rate_limit_policies = Arc::new(
+        fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
+    );
+
+    // Hourly prune for the Postgres rate-limit table (no-op for Redis).
+    {
+        let store = rate_limit_store.clone();
+        let max_window = rate_limit_policies.max_window();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                match store.prune(max_window).await {
+                    Ok(n) if n > 0 => tracing::debug!(rows = n, "rate_limit_events prune"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "rate_limit_events prune failed"),
+                }
+            }
+        });
+    }
+
     // Build platform API router via shared builder (handles ~38 state structs)
     let routes = fc_platform::shared::server_setup::build_platform_routes(
         &repos,
         &auth_services,
         &unit_of_work,
         fc_platform::shared::server_setup::PlatformRoutesConfig {
+            rate_limit_store,
+            rate_limit_policies,
             session_cookie_secure: false,
             session_cookie_same_site: std::env::var("FC_SESSION_COOKIE_SAME_SITE")
                 .unwrap_or_else(|_| fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string()),

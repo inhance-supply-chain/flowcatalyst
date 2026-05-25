@@ -89,6 +89,9 @@ dashmap = { workspace = true }
 governor = { workspace = true }
 nonzero_ext = { workspace = true }
 
+# Distributed rate limiter (Redis when FC_REDIS_URL is set, Postgres fallback)
+redis = { workspace = true }
+
 # Scheduler dependencies
 parking_lot = { workspace = true }
 subtle = { workspace = true }

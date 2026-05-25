@@ -728,11 +728,19 @@ async fn main() -> Result<()> {
     // 8e. Build platform API router via shared builder (handles ~38 state structs).
     // Event fan-out runs as a background service (started below); the request
     // path doesn't need the queue/dispatch deps wired in here.
+    let rate_limit_store =
+        fc_platform::shared::rate_limit_store::build_rate_limit_store(repos.pool.clone()).await;
+    let rate_limit_policies = std::sync::Arc::new(
+        fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
+    );
+
     let routes = fc_platform::shared::server_setup::build_platform_routes(
         &repos,
         &auth_services,
         &unit_of_work,
         fc_platform::shared::server_setup::PlatformRoutesConfig {
+            rate_limit_store: rate_limit_store.clone(),
+            rate_limit_policies: rate_limit_policies.clone(),
             session_cookie_secure: false,
             session_cookie_same_site:
                 fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE
@@ -749,6 +757,26 @@ async fn main() -> Result<()> {
         },
         platform_application_id.clone(),
     );
+
+    // Background prune for the Postgres rate-limit table (no-op for Redis).
+    // Runs hourly; keeps `iam_rate_limit_events` from growing past peak QPS
+    // × max policy window.
+    {
+        let store = rate_limit_store.clone();
+        let max_window = rate_limit_policies.max_window();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            tick.tick().await; // skip the immediate-fire tick
+            loop {
+                tick.tick().await;
+                match store.prune(max_window).await {
+                    Ok(n) if n > 0 => tracing::debug!(rows = n, "rate_limit_events prune"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "rate_limit_events prune failed"),
+                }
+            }
+        });
+    }
 
     // Event fan-out runs inside the stream processor (fc-stream) configured
     // above; nothing to start here.

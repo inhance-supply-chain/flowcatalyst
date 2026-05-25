@@ -48,6 +48,12 @@ use super::AuthServices;
 
 /// Per-binary configuration for the points where binaries diverge.
 pub struct PlatformRoutesConfig {
+    /// Distributed rate-limit store. Built by the binary (async) so the
+    /// Redis-or-Postgres choice happens once at startup and is logged.
+    /// Use `NoopRateLimitStore` in tests.
+    pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
+    /// Per-bucket policies, loaded from env via `RateLimitPolicies::from_env`.
+    pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
     /// `Secure` flag for the OIDC session cookie. `true` in production.
     pub session_cookie_secure: bool,
     /// `SameSite` policy for the session cookie (`Lax`, `Strict`, or `None`).
@@ -533,6 +539,7 @@ pub fn build_platform_routes(
         auth.oidc_sync.clone(),
         auth.auth.clone(),
         unit_of_work.clone(),
+        repos.oauth_client_repo.clone(),
     )
     .with_session_cookie_settings(
         "fc_session",
@@ -578,6 +585,8 @@ pub fn build_platform_routes(
         auth.password.clone(),
         repos.login_attempt_repo.clone(),
         client_token_rate_limit,
+        config.rate_limit_store.clone(),
+        config.rate_limit_policies.clone(),
     );
 
     let audit_logs_state = AuditLogsState {
@@ -1046,5 +1055,7 @@ pub fn build_platform_routes(
             platform_application_id,
         },
         static_dir: config.static_dir,
+        rate_limit_store: config.rate_limit_store,
+        rate_limit_policies: config.rate_limit_policies,
     }
 }

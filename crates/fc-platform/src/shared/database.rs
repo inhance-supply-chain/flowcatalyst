@@ -395,6 +395,10 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
                 "../../../../migrations/029_oauth_client_post_logout_redirect_uris.sql"
             ),
         ),
+        (
+            "030_rate_limit_events",
+            include_str!("../../../../migrations/030_rate_limit_events.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
