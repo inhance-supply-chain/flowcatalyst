@@ -298,6 +298,13 @@ impl TrafficStrategy for AwsAlbTrafficStrategy {
 /// cause the watcher to crash -- traffic management failures must not take
 /// down the standby system.
 ///
+/// **Owns:** the supplied `strategy` (Arc) and the `watch::Receiver` for
+/// leadership status.
+/// **Exits:** when the watch sender is dropped (`status_rx.changed()`
+/// returns `Err`). The sender lives in `LeaderElection`, so dropping the
+/// election (e.g. graceful shutdown) closes this watcher.
+/// **Joined by:** the caller via the returned `JoinHandle`.
+///
 /// # Arguments
 ///
 /// * `strategy` - The traffic strategy to manage

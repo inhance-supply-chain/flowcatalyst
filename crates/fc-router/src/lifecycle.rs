@@ -17,6 +17,22 @@
 //! handle had often expired already by the time the extender fired. Set the
 //! queue's SQS visibility timeout (queue-side, AWS console / IaC) to fit
 //! your longest realistic mediation if redelivery noise is undesirable.
+//!
+//! ## Background-task lifecycle (applies to every `tokio::spawn` here)
+//!
+//! All background tasks in this file follow the same pattern:
+//! - **Own:** an interval ticker plus Arc clones of the manager / health
+//!   / warning service drawn from the enclosing closure.
+//! - **Exit:** on `shutdown_rx.recv()` from the broadcast channel
+//!   stored in `self.shutdown_tx`. `LifecycleManager::shutdown()` fires
+//!   that channel and every task exits its `select!` loop.
+//! - **Joined by:** nobody — these are detached, fire-and-forget tasks.
+//!   The broadcast channel is the only lifecycle signal.
+//!
+//! Each `tokio::select!` below selects between two arms: the ticker arm
+//! (do the work) and the shutdown arm (log and break). Per-arm intent is
+//! obvious from the code; the comment block above each task identifies
+//! *what* the task monitors / cleans up.
 
 use std::sync::Arc;
 use std::time::Duration;

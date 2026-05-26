@@ -296,8 +296,15 @@ pub struct QueueManager {
     /// Health service for recording consumer poll times
     health_service: Option<Arc<crate::health::HealthService>>,
 
-    /// Weak self-reference for spawning poll tasks from sync_queue_consumers.
-    /// Set via `init_self_ref()` after wrapping in Arc.
+    /// Weak self-reference used by `sync_queue_consumers` to spawn poll
+    /// tasks for newly added consumers without taking ownership of the
+    /// outer `Arc`. **Why Weak**: `sync_queue_consumers` is reached from
+    /// places that hold `&self`, not `Arc<Self>`, so we can't clone an
+    /// owned Arc out of the call site; storing one here would create a
+    /// cycle (`QueueManager` keeps itself alive forever). The Weak is
+    /// installed by `init_self_ref` right after the outer `Arc` is built,
+    /// and upgrades inside `sync_queue_consumers` to clone into the
+    /// spawned task.
     self_ref: parking_lot::RwLock<Option<std::sync::Weak<Self>>>,
 }
 
@@ -353,8 +360,11 @@ impl QueueManager {
         }
     }
 
-    /// Initialize the self-reference after wrapping in Arc.
-    /// Must be called before `start()` or any config sync.
+    /// Install the Weak self-reference. Must be called once after
+    /// wrapping the manager in `Arc`, before `start()` or any config sync.
+    ///
+    /// **Why `self: &Arc<Self>`**: we need an `Arc` in hand to call
+    /// `Arc::downgrade`. With `&self` we wouldn't have one.
     pub fn init_self_ref(self: &Arc<Self>) {
         *self.self_ref.write() = Some(Arc::downgrade(self));
     }
@@ -1163,7 +1173,13 @@ impl QueueManager {
     }
 
     /// Spawn a poll task for a single consumer. Returns the JoinHandle.
-    /// Called from both `start()` (initial consumers) and `sync_queue_consumers` (hot-added consumers).
+    /// Called from both `start()` (initial consumers) and `sync_queue_consumers`
+    /// (hot-added consumers).
+    ///
+    /// **Why `self: &Arc<Self>`**: the spawned task captures
+    /// `manager = self.clone()` so it can call back into the manager for
+    /// the lifetime of the consumer. That clone needs the receiver to be
+    /// an `Arc`, not `&Self`.
     fn spawn_consumer_poll_task(
         self: &Arc<Self>,
         consumer: Arc<dyn QueueConsumer + Send + Sync>,
@@ -1237,7 +1253,14 @@ impl QueueManager {
         })
     }
 
-    /// Start the queue manager and all consumers
+    /// Start the queue manager and all consumers.
+    ///
+    /// **Why `self: Arc<Self>`** (owned, not borrowed): the body fans out
+    /// to `spawn_consumer_poll_task(&self)` and
+    /// `self.clone().spawn_in_pipeline_reaper()`, each of which moves an
+    /// Arc clone into a spawned task that outlives this function. Taking
+    /// owned `Arc<Self>` means the caller's last reference is consumed
+    /// at the call site; the spawned tasks become the new owners.
     pub async fn start(self: Arc<Self>) -> Result<()> {
         // Ensure self_ref is set so sync_queue_consumers can spawn poll tasks
         self.init_self_ref();
@@ -1279,6 +1302,11 @@ impl QueueManager {
     /// SQS would keep redelivering and `filter_duplicates` would silently
     /// swallow each redelivery as a duplicate, leaving thousands of
     /// messages stuck on the queue.
+    /// **Why `self: Arc<Self>`** (owned): the spawned reaper task closes
+    /// over `in_pipeline` and `app_index` (Arc clones extracted from
+    /// `self`) and lives until shutdown — the receiver's Arc is consumed
+    /// by the call site and the task becomes the new owner of the
+    /// captured references.
     fn spawn_in_pipeline_reaper(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let in_pipeline = self.in_pipeline.clone();

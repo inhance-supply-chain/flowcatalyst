@@ -354,6 +354,15 @@ impl ProcessPool {
 
     /// Spawn a standalone task for an IMMEDIATE mode message.
     /// No group ordering — acquires semaphore, rate-limits, mediates, callbacks directly.
+    ///
+    /// **Owns:** Arc clones of the pool's semaphore / mediator / counters /
+    /// rate limiter / metrics / circuit-breaker registry, plus the single
+    /// `PoolTask` value that was handed in.
+    /// **Exits:** when mediation finishes (success, failure, or callback
+    /// fired). Self-terminating — there is no shutdown channel; the task
+    /// is short-lived (one message).
+    /// **Joined by:** nobody. The pool tracks in-flight work via the
+    /// `active_workers` counter and the semaphore permit lifetime.
     fn spawn_immediate_task(&self, task: PoolTask) {
         let semaphore = self.semaphore.clone();
         let mediator = self.mediator.clone();
@@ -453,6 +462,18 @@ impl ProcessPool {
     }
 
     /// Spawn a task that drains all queued messages for a group, then exits.
+    ///
+    /// **Owns:** the group's `MessageGroupHandler` (via `group_handlers`)
+    /// and Arc clones of the pool's shared state (semaphore, mediator,
+    /// counters, rate limiter, metrics, circuit-breaker registry,
+    /// failed-batch tracking).
+    /// **Exits:** when the group's queue drains to empty (the handler's
+    /// `processing` flag is cleared and the loop breaks). Self-terminating
+    /// — one drain task per active group, recreated by the next submit
+    /// that finds the queue idle.
+    /// **Joined by:** nobody. The `processing` flag in the handler is the
+    /// "is a drain task running" signal; the Drop guard at the top of the
+    /// spawned body resets that flag even on panic.
     fn spawn_drain_task(&self, group_id: Arc<str>) {
         let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
         let semaphore = self.semaphore.clone();

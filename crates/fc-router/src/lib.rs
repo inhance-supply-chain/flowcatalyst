@@ -18,6 +18,7 @@ pub mod circuit_breaker_registry;
 pub mod config_sync;
 pub mod error;
 pub mod health;
+pub mod http_pool;
 pub mod lifecycle;
 pub mod manager;
 pub mod mediator;
@@ -42,6 +43,7 @@ pub use config_sync::{
 };
 pub use error::RouterError;
 pub use health::{HealthService, HealthServiceConfig};
+pub use http_pool::{HostConnectionPool, HostKey, HostKeyError, HostPoolRegistry, HostPoolSizing};
 pub use lifecycle::{LifecycleConfig, LifecycleManager};
 pub use manager::{ConsumerFactory, InFlightMessageInfo, QueueManager};
 pub use mediator::{HttpMediator, HttpMediatorConfig, HttpVersion, Mediator};
