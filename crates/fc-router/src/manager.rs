@@ -296,16 +296,6 @@ pub struct QueueManager {
     /// Health service for recording consumer poll times
     health_service: Option<Arc<crate::health::HealthService>>,
 
-    /// Weak self-reference used by `sync_queue_consumers` to spawn poll
-    /// tasks for newly added consumers without taking ownership of the
-    /// outer `Arc`. **Why Weak**: `sync_queue_consumers` is reached from
-    /// places that hold `&self`, not `Arc<Self>`, so we can't clone an
-    /// owned Arc out of the call site; storing one here would create a
-    /// cycle (`QueueManager` keeps itself alive forever). The Weak is
-    /// installed by `init_self_ref` right after the outer `Arc` is built,
-    /// and upgrades inside `sync_queue_consumers` to clone into the
-    /// spawned task.
-    self_ref: parking_lot::RwLock<Option<std::sync::Weak<Self>>>,
 }
 
 impl QueueManager {
@@ -356,17 +346,7 @@ impl QueueManager {
             stall_config,
             warning_service: Arc::new(WarningService::noop()),
             health_service: None,
-            self_ref: parking_lot::RwLock::new(None),
         }
-    }
-
-    /// Install the Weak self-reference. Must be called once after
-    /// wrapping the manager in `Arc`, before `start()` or any config sync.
-    ///
-    /// **Why `self: &Arc<Self>`**: we need an `Arc` in hand to call
-    /// `Arc::downgrade`. With `&self` we wouldn't have one.
-    pub fn init_self_ref(self: &Arc<Self>) {
-        *self.self_ref.write() = Some(Arc::downgrade(self));
     }
 
     /// Set the consumer factory for creating new queue consumers during config sync
@@ -430,7 +410,6 @@ impl QueueManager {
             stall_config: StallConfig::default(),
             warning_service: Arc::new(WarningService::noop()),
             health_service: None,
-            self_ref: parking_lot::RwLock::new(None),
         }
     }
 
@@ -440,8 +419,12 @@ impl QueueManager {
         self.consumers.write().await.insert(id, consumer);
     }
 
-    /// Apply router configuration (initial setup)
-    pub async fn apply_config(&self, config: RouterConfig) -> Result<()> {
+    /// Apply router configuration (initial setup).
+    ///
+    /// Takes `self: &Arc<Self>` so `sync_queue_consumers` can spawn poll
+    /// tasks for hot-added consumers. Callers already hold the manager
+    /// behind an Arc.
+    pub async fn apply_config(self: &Arc<Self>, config: RouterConfig) -> Result<()> {
         let mut pool_configs = self.pool_configs.write().await;
         for pool_config in config.processing_pools {
             let code = pool_config.code.clone();
@@ -456,7 +439,7 @@ impl QueueManager {
     /// - Removed pools: drain asynchronously
     /// - Updated pools: update concurrency/rate limit in-place
     /// - New pools: create and start
-    pub async fn reload_config(&self, config: RouterConfig) -> Result<bool> {
+    pub async fn reload_config(self: &Arc<Self>, config: RouterConfig) -> Result<bool> {
         if !self.running.load(Ordering::SeqCst) {
             warn!("Cannot reload config - QueueManager is shutting down");
             return Ok(false);
@@ -606,7 +589,10 @@ impl QueueManager {
 
     /// Sync queue consumers based on configuration changes
     /// Mirrors Java's queue consumer sync logic in syncConfig()
-    async fn sync_queue_consumers(&self, config: &RouterConfig) -> Result<(usize, usize)> {
+    async fn sync_queue_consumers(
+        self: &Arc<Self>,
+        config: &RouterConfig,
+    ) -> Result<(usize, usize)> {
         let mut queues_created = 0;
         let mut queues_removed = 0;
 
@@ -698,16 +684,10 @@ impl QueueManager {
         drop(queue_configs);
         drop(draining);
 
-        // Spawn poll tasks for newly created consumers
-        if !new_consumers.is_empty() {
-            if let Some(arc_self) = self.self_ref.read().as_ref().and_then(|w| w.upgrade()) {
-                for consumer in new_consumers {
-                    info!(consumer_id = %consumer.identifier(), "Spawning poll task for hot-added consumer");
-                    arc_self.spawn_consumer_poll_task(consumer);
-                }
-            } else {
-                warn!("Cannot spawn poll tasks for new consumers — self_ref not initialized (call init_self_ref after Arc::new)");
-            }
+        // Spawn poll tasks for newly created consumers.
+        for consumer in new_consumers {
+            info!(consumer_id = %consumer.identifier(), "Spawning poll task for hot-added consumer");
+            self.spawn_consumer_poll_task(consumer);
         }
 
         Ok((queues_created, queues_removed))
@@ -1262,9 +1242,6 @@ impl QueueManager {
     /// owned `Arc<Self>` means the caller's last reference is consumed
     /// at the call site; the spawned tasks become the new owners.
     pub async fn start(self: Arc<Self>) -> Result<()> {
-        // Ensure self_ref is set so sync_queue_consumers can spawn poll tasks
-        self.init_self_ref();
-
         let consumers = self.consumers.read().await;
         info!(consumers = consumers.len(), "Starting QueueManager");
 

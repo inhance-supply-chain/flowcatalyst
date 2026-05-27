@@ -5,6 +5,7 @@
 //! and exits when the group's queue is empty. This matches the TS MessageGroupHandler
 //! pattern and uses ~200 bytes per idle group vs ~100KB with the old design.
 
+use arc_swap::ArcSwapOption;
 use dashmap::{DashMap, DashSet};
 use governor::{
     clock::DefaultClock,
@@ -31,12 +32,36 @@ const DEFAULT_GROUP: &str = "__DEFAULT__";
 const QUEUE_CAPACITY_MULTIPLIER: u32 = 20; // Java: QUEUE_CAPACITY_MULTIPLIER = 20
 const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
 
-/// Pool-wide rate limiter shared across all message groups in a pool.
-/// Wrapped in `RwLock<Option<...>>` so the limiter can be hot-swapped at
-/// runtime when a pool's configured rate changes — readers (workers) keep
-/// using their snapshot, the next acquire picks up the new limit.
-type SharedRateLimiter =
-    Arc<parking_lot::RwLock<Option<Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>>;
+/// Pool-wide rate limiter state shared across all message groups in a pool.
+///
+/// Bundles the configured `rpm` with the live `RateLimiter` so a single
+/// `ArcSwapOption` swap atomically updates both — replacing the older
+/// `Arc<RwLock<Option<Arc<RateLimiter>>>>` + `Arc<RwLock<Option<u32>>>`
+/// pair. Readers (workers) take a lock-free snapshot via `.load()`; the
+/// next acquire after an `update_rate_limit` picks up the new state.
+type SharedRateLimiter = Arc<ArcSwapOption<RateLimitState>>;
+
+#[derive(Debug)]
+struct RateLimitState {
+    rpm: u32,
+    limiter: RateLimiter<NotKeyed, InMemoryState, DefaultClock>,
+}
+
+impl RateLimitState {
+    /// Build a `RateLimitState` from a per-minute quota. `Some(0)` and
+    /// values that don't fit a `NonZeroU32` collapse to `None`.
+    fn from_rpm(rpm: u32) -> Option<Arc<Self>> {
+        if rpm == 0 {
+            return None;
+        }
+        NonZeroU32::new(rpm).map(|nz| {
+            Arc::new(Self {
+                rpm,
+                limiter: RateLimiter::direct(Quota::per_minute(nz)),
+            })
+        })
+    }
+}
 
 /// Composite key for batch+group tracking - avoids format!() string allocation
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -137,11 +162,13 @@ pub struct ProcessPool {
     /// Track remaining messages per batch+group for cleanup
     batch_group_message_count: Arc<DashMap<BatchGroupKey, AtomicU32>>,
 
-    /// Rate limiter (optional, behind Arc<RwLock> for sharing with workers and in-place updates)
+    /// Rate limiter + configured rpm bundled together. `ArcSwapOption`
+    /// allows lock-free reads on the hot path (every dispatched message)
+    /// and atomic hot-swap on `update_rate_limit`. The bundled `rpm`
+    /// replaces the older separate `Arc<RwLock<Option<u32>>>` field —
+    /// one primitive now holds both the live limiter and the value used
+    /// to detect "did the config change?" during reconfig.
     rate_limiter: SharedRateLimiter,
-
-    /// Current rate limit value for comparison during updates
-    rate_limit_per_minute: Arc<parking_lot::RwLock<Option<u32>>>,
 
     /// Running state
     running: AtomicBool,
@@ -174,9 +201,7 @@ impl ProcessPool {
             config.concurrency
         };
 
-        let rate_limiter = config.rate_limit_per_minute.and_then(|rpm| {
-            NonZeroU32::new(rpm).map(|nz| Arc::new(RateLimiter::direct(Quota::per_minute(nz))))
-        });
+        let initial_rate_limit = config.rate_limit_per_minute.and_then(RateLimitState::from_rpm);
 
         Self {
             config: config.clone(),
@@ -187,8 +212,7 @@ impl ProcessPool {
             in_flight_groups: DashSet::new(),
             failed_batch_groups: Arc::new(DashSet::new()),
             batch_group_message_count: Arc::new(DashMap::new()),
-            rate_limiter: Arc::new(parking_lot::RwLock::new(rate_limiter)),
-            rate_limit_per_minute: Arc::new(parking_lot::RwLock::new(config.rate_limit_per_minute)),
+            rate_limiter: Arc::new(ArcSwapOption::new(initial_rate_limit)),
             running: AtomicBool::new(false),
             queue_size: Arc::new(AtomicU32::new(0)),
             active_workers: Arc::new(AtomicU32::new(0)),
@@ -820,9 +844,9 @@ impl ProcessPool {
     /// Check if rate limited
     pub fn is_rate_limited(&self) -> bool {
         self.rate_limiter
-            .read()
+            .load()
             .as_ref()
-            .map(|rl| rl.check().is_err())
+            .map(|s| s.limiter.check().is_err())
             .unwrap_or(false)
     }
 
@@ -842,22 +866,25 @@ impl ProcessPool {
         rate_limiter: &SharedRateLimiter,
         metrics_collector: &Arc<PoolMetricsCollector>,
     ) {
-        let limiter = rate_limiter.read().clone();
-
-        let rl = match limiter {
+        // Lock-free snapshot. `load_full` clones the inner Arc; the
+        // returned handle is independent of any subsequent `store` so a
+        // hot-swap during `.until_ready().await` does not affect this
+        // call (the next acquire picks up the new limiter).
+        let snapshot = rate_limiter.load_full();
+        let state = match snapshot {
             None => return,
-            Some(rl) => rl,
+            Some(s) => s,
         };
 
         // Fast path: permit available immediately.
-        if rl.check().is_ok() {
+        if state.limiter.check().is_ok() {
             return;
         }
 
         // Slow path: wait for permit (no timeout).
         metrics_collector.record_rate_limited();
         debug!("Rate limited — waiting for permit");
-        rl.until_ready().await;
+        state.limiter.until_ready().await;
     }
 
     /// Drain the pool (stop accepting new work)
@@ -891,7 +918,7 @@ impl ProcessPool {
                 MIN_QUEUE_CAPACITY,
             ),
             message_group_count: self.group_handlers.len() as u32,
-            rate_limit_per_minute: *self.rate_limit_per_minute.read(),
+            rate_limit_per_minute: self.rate_limit_per_minute(),
             is_rate_limited: self.is_rate_limited(),
             metrics: Some(self.metrics_collector.get_metrics()),
         }
@@ -926,7 +953,7 @@ impl ProcessPool {
 
     /// Get current rate limit setting
     pub fn rate_limit_per_minute(&self) -> Option<u32> {
-        *self.rate_limit_per_minute.read()
+        self.rate_limiter.load().as_ref().map(|s| s.rpm)
     }
 
     /// Get current queue size
@@ -1005,24 +1032,20 @@ impl ProcessPool {
         permits
     }
 
-    /// Update rate limit at runtime
+    /// Update rate limit at runtime.
+    ///
+    /// Atomic swap via `ArcSwapOption::store` — in-flight workers
+    /// holding a snapshot from before the swap finish on the old
+    /// limiter; the next acquire picks up the new state.
     pub fn update_rate_limit(&self, new_rate_limit: Option<u32>) {
-        let old_rate_limit = *self.rate_limit_per_minute.read();
+        let old_rate_limit = self.rate_limit_per_minute();
 
         if old_rate_limit == new_rate_limit {
             return;
         }
 
-        let new_limiter = new_rate_limit.and_then(|rpm| {
-            if rpm == 0 {
-                None
-            } else {
-                NonZeroU32::new(rpm).map(|nz| Arc::new(RateLimiter::direct(Quota::per_minute(nz))))
-            }
-        });
-
-        *self.rate_limiter.write() = new_limiter;
-        *self.rate_limit_per_minute.write() = new_rate_limit;
+        let new_state = new_rate_limit.and_then(RateLimitState::from_rpm);
+        self.rate_limiter.store(new_state);
 
         info!(
             pool_code = %self.config.code,
