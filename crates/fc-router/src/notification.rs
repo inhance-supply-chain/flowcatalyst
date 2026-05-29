@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tracing::{debug, error, info, warn};
 
 use fc_common::{Warning, WarningSeverity};
@@ -966,7 +966,11 @@ pub fn create_notification_service_with_scheduler(
     ));
 
     let scheduler_handle = if config.batch_interval_seconds > 0 {
-        let service_for_scheduler = service.clone();
+        // Hold only a `Weak` reference so the scheduler exits on its own once the
+        // last strong owner of the service (the warning service / returned
+        // handle) is dropped at shutdown, rather than looping forever with no
+        // exit arm. Mirrors the router's broker-stats refresh task.
+        let weak_service: Weak<BatchingNotificationService> = Arc::downgrade(&service);
         let interval = std::time::Duration::from_secs(config.batch_interval_seconds);
 
         Some(tokio::spawn(async move {
@@ -975,10 +979,15 @@ pub fn create_notification_service_with_scheduler(
                 "Starting notification batch scheduler"
             );
             let mut interval_timer = tokio::time::interval(interval);
+            interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             loop {
                 interval_timer.tick().await;
-                service_for_scheduler.send_batch().await;
+                let Some(service) = weak_service.upgrade() else {
+                    info!("Notification service dropped; batch scheduler exiting");
+                    break;
+                };
+                service.send_batch().await;
             }
         }))
     } else {

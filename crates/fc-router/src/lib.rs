@@ -67,7 +67,7 @@ pub use traffic::{AlbTrafficConfig, AwsAlbTrafficStrategy};
 pub use warning::{WarningService, WarningServiceConfig};
 
 // Re-export QueueMetrics for API
-pub use api::{spawn_broker_stats_refresh, CachedBrokerStats};
+pub use api::CachedBrokerStats;
 pub use fc_queue::QueueMetrics;
 
 pub type Result<T> = std::result::Result<T, RouterError>;
