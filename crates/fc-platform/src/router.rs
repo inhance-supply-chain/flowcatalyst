@@ -213,6 +213,12 @@ pub const PATH_HEALTH: &str = "/health";
 // Swagger
 pub const PATH_SWAGGER_UI: &str = "/swagger-ui";
 pub const PATH_OPENAPI_SPEC: &str = "/q/openapi";
+/// Unfiltered OpenAPI spec including `/bff/*` paths that share handlers
+/// with their `/api/*` siblings. The `/bff/*` tier is frontend-only and
+/// not part of the SDK contract; this endpoint is for internal tooling
+/// (full-surface exploration, developer portal previews) where the BFF
+/// shapes are useful even though they aren't programmable.
+pub const PATH_OPENAPI_SPEC_FULL: &str = "/q/openapi-full";
 
 // =============================================================================
 // PlatformRoutes
@@ -391,6 +397,14 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 crate::webauthn::webauthn_router(self.webauthn).layer(auth_layer.clone()),
             )
             .split_for_parts();
+
+        // Capture the full spec (including `/bff/*` paths) before we
+        // strip BFF entries from the public surface. Served at
+        // `PATH_OPENAPI_SPEC_FULL` for internal tooling — pre-serialised
+        // once at boot since the spec is fixed for the process lifetime.
+        let openapi_full_bytes: axum::body::Bytes = serde_json::to_vec(&openapi)
+            .map(axum::body::Bytes::from)
+            .unwrap_or_default();
 
         // Strip `/bff/*` paths from the spec. The BFF tier is internal to the
         // frontend and intentionally not part of the programmable surface; it
@@ -605,8 +619,29 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         let app = app
             // Health
             .route(PATH_HEALTH, get(health_handler))
-            // Swagger UI
-            .merge(SwaggerUi::new(PATH_SWAGGER_UI).url(PATH_OPENAPI_SPEC, openapi.clone()));
+            // Swagger UI (serves `/swagger-ui` + `/q/openapi`, BFF-stripped)
+            .merge(SwaggerUi::new(PATH_SWAGGER_UI).url(PATH_OPENAPI_SPEC, openapi.clone()))
+            // Full OpenAPI spec including `/bff/*`. JSON only — not mounted
+            // into Swagger UI to keep the default UI aligned with the SDK
+            // contract. Body is pre-serialised at boot.
+            .route(
+                PATH_OPENAPI_SPEC_FULL,
+                get({
+                    let body = openapi_full_bytes;
+                    move || {
+                        let body = body.clone();
+                        async move {
+                            (
+                                [(
+                                    axum::http::header::CONTENT_TYPE,
+                                    "application/json",
+                                )],
+                                body,
+                            )
+                        }
+                    }
+                }),
+            );
 
         // SPA serving (if static_dir is configured)
         let app = if let Some(ref static_dir) = self.static_dir {
