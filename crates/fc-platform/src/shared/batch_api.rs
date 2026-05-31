@@ -75,8 +75,8 @@ async fn batch_events(
     _auth: Authenticated,
     Json(req): Json<BatchEventsRequest>,
 ) -> Result<Json<BatchResponse>, PlatformError> {
-    if req.items.len() > 500 {
-        return Err(PlatformError::validation("Maximum 500 items per batch"));
+    if req.items.len() > 1000 {
+        return Err(PlatformError::validation("Maximum 1000 items per batch"));
     }
 
     let mut inserted_events = Vec::with_capacity(req.items.len());

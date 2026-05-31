@@ -7,11 +7,12 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use serde::Deserialize;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-use crate::dispatch_job::api::{
-    BatchCreateDispatchJobsRequest, BatchCreateDispatchJobsResponse, DispatchJobResponse,
-};
+use crate::dispatch_job::api::CreateDispatchJobRequest;
+use crate::shared::batch_api::{BatchResponse, BatchResultItem};
 use crate::shared::error::PlatformError;
 use crate::shared::middleware::Authenticated;
 use crate::{
@@ -23,26 +24,35 @@ pub struct SdkDispatchJobsState {
     pub dispatch_job_repo: Arc<DispatchJobRepository>,
 }
 
+/// SDK batch dispatch-jobs request. The wrapper key is `items` (1:1 with the
+/// outbox dispatcher `BatchRequest{items}` and the events/audit batch
+/// endpoints); each item is a `CreateDispatchJobRequest`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SdkBatchDispatchJobsRequest {
+    pub items: Vec<CreateDispatchJobRequest>,
+}
+
 async fn sdk_batch_create_dispatch_jobs(
     State(state): State<SdkDispatchJobsState>,
     auth: Authenticated,
-    Json(req): Json<BatchCreateDispatchJobsRequest>,
-) -> Result<Json<BatchCreateDispatchJobsResponse>, PlatformError> {
+    Json(req): Json<SdkBatchDispatchJobsRequest>,
+) -> Result<Json<BatchResponse>, PlatformError> {
     // Validate batch size
-    if req.jobs.is_empty() {
+    if req.items.is_empty() {
         return Err(PlatformError::validation(
             "Request body must contain at least one dispatch job",
         ));
     }
-    if req.jobs.len() > 500 {
+    if req.items.len() > 1000 {
         return Err(PlatformError::validation(
-            "Batch size cannot exceed 500 dispatch jobs",
+            "Batch size cannot exceed 1000 dispatch jobs",
         ));
     }
 
     let mut created_jobs: Vec<DispatchJob> = Vec::new();
 
-    for job_req in req.jobs {
+    for job_req in req.items {
         // Validate client access if specified
         if let Some(ref cid) = job_req.client_id {
             if !auth.0.can_access_client(cid) {
@@ -133,14 +143,18 @@ async fn sdk_batch_create_dispatch_jobs(
     // Bulk insert
     state.dispatch_job_repo.insert_many(&created_jobs).await?;
 
-    let count = created_jobs.len();
-    let job_responses: Vec<DispatchJobResponse> =
-        created_jobs.into_iter().map(Into::into).collect();
+    // Per-item result list — 1:1 with the outbox/SDK contract
+    // {results:[{id,status,error?}]}. Insert is all-or-nothing, so every
+    // persisted job reports SUCCESS.
+    let results: Vec<BatchResultItem> = created_jobs
+        .iter()
+        .map(|job| BatchResultItem {
+            id: job.id.clone(),
+            status: "SUCCESS".to_string(),
+        })
+        .collect();
 
-    Ok(Json(BatchCreateDispatchJobsResponse {
-        jobs: job_responses,
-        count,
-    }))
+    Ok(Json(BatchResponse { results }))
 }
 
 pub fn sdk_dispatch_jobs_batch_router(state: SdkDispatchJobsState) -> Router {
