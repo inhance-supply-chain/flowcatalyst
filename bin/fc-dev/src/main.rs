@@ -39,7 +39,7 @@ use fc_queue::postgres::PostgresQueue;
 use fc_queue::EmbeddedQueue;
 use fc_router::{
     api::create_router as create_api_router,
-    CircuitBreakerRegistry as RouterCircuitBreakerRegistry, HealthService, HealthServiceConfig,
+    HealthService, HealthServiceConfig,
     HttpMediatorConfig, LifecycleConfig, LifecycleManager, QueueManager, WarningService,
     WarningServiceConfig,
 };
@@ -489,9 +489,11 @@ async fn main() -> Result<()> {
 
     // 4. Create QueueManager. Mediator *config* is passed (not a singleton);
     //    each pool gets its own HttpMediator + connection pool.
-    let mut queue_manager_inner = QueueManager::new(HttpMediatorConfig::dev());
-    queue_manager_inner.set_warning_service(warning_service.clone());
-    let queue_manager = Arc::new(queue_manager_inner);
+    let queue_manager = Arc::new(
+        QueueManager::builder(HttpMediatorConfig::dev())
+            .warning_service(warning_service.clone())
+            .build(),
+    );
     queue_manager.add_consumer(queue.clone()).await;
 
     // 5. Apply router configuration
@@ -511,11 +513,19 @@ async fn main() -> Result<()> {
     queue_manager.apply_config(router_config).await?;
 
     // 6. Start lifecycle manager (visibility extension, health checks)
-    let lifecycle = LifecycleManager::start(
+    let lifecycle_config = LifecycleConfig::default();
+    let cb_max_idle = lifecycle_config.circuit_breaker_max_idle;
+    let mut lifecycle = LifecycleManager::start(
         queue_manager.clone(),
         warning_service.clone(),
         health_service.clone(),
-        LifecycleConfig::default(),
+        lifecycle_config,
+    );
+    // Wire periodic idle-eviction against the manager's shared breaker registry
+    // (see fc-router main.rs) — otherwise shared breakers grow unbounded.
+    lifecycle.set_circuit_breaker_registry(
+        queue_manager.circuit_breaker_registry().clone(),
+        cb_max_idle,
     );
 
     // 7. Outbox processor — deferred until after AuthService is ready (needs a service token).
@@ -832,7 +842,9 @@ async fn main() -> Result<()> {
     info!("Platform APIs configured");
 
     // 9. Start API server (merge router API with platform APIs)
-    let router_circuit_breaker = Arc::new(RouterCircuitBreakerRegistry::default());
+    // Shared registry: the monitoring API must read the same breakers the
+    // pools record into (was a disconnected RouterCircuitBreakerRegistry::default()).
+    let router_circuit_breaker = queue_manager.circuit_breaker_registry().clone();
     let router_api = create_api_router(
         queue.clone(),
         queue_manager.clone(),

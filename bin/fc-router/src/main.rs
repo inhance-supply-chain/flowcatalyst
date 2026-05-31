@@ -23,7 +23,7 @@ use fc_common::{PoolConfig, QueueConfig, RouterConfig, WarningSeverity};
 use fc_queue::sqs::SqsQueueConsumer;
 use fc_router::{
     api::create_router_with_options, create_notification_service_with_scheduler,
-    CircuitBreakerRegistry, ConfigSyncConfig, ConfigSyncService, ConsumerFactory, HealthService,
+    ConfigSyncConfig, ConfigSyncService, ConsumerFactory, HealthService,
     HealthServiceConfig, HttpMediatorConfig, LifecycleConfig, LifecycleManager, NotificationConfig,
     QueueManager, StandbyProcessor, StandbyRouterConfig, WarningService, WarningServiceConfig,
 };
@@ -90,13 +90,15 @@ async fn main() -> Result<()> {
 
     // 3. Create QueueManager. Mediator *config* is passed (not a singleton);
     //    each pool gets its own HttpMediator + connection pool.
-    let mut queue_manager_inner = QueueManager::new(HttpMediatorConfig::production());
-    queue_manager_inner.set_warning_service(warning_service.clone());
-    queue_manager_inner.set_health_service(health_service.clone());
-    queue_manager_inner.set_consumer_factory(Arc::new(SqsConsumerFactory {
-        sqs_client: sqs_client.clone(),
-    }));
-    let queue_manager = Arc::new(queue_manager_inner);
+    let queue_manager = Arc::new(
+        QueueManager::builder(HttpMediatorConfig::production())
+            .warning_service(warning_service.clone())
+            .health_service(health_service.clone())
+            .consumer_factory(Arc::new(SqsConsumerFactory {
+                sqs_client: sqs_client.clone(),
+            }))
+            .build(),
+    );
 
     // 5. Initialize Standby Processor (Active/Passive HA)
     let standby_config = load_standby_config();
@@ -221,13 +223,22 @@ async fn main() -> Result<()> {
     }
 
     // 9. Start lifecycle manager with all features
-    let lifecycle = LifecycleManager::start_with_features(
+    let lifecycle_config = LifecycleConfig::default();
+    let cb_max_idle = lifecycle_config.circuit_breaker_max_idle;
+    let mut lifecycle = LifecycleManager::start_with_features(
         queue_manager.clone(),
         warning_service.clone(),
         health_service.clone(),
-        LifecycleConfig::default(),
+        lifecycle_config,
         config_sync,
         standby.clone(),
+    );
+    // Wire periodic idle-eviction against the manager's shared breaker registry.
+    // Without this the eviction task never runs and shared breakers (PR1) grow
+    // unbounded; the registry here is the same one the pools record into.
+    lifecycle.set_circuit_breaker_registry(
+        queue_manager.circuit_breaker_registry().clone(),
+        cb_max_idle,
     );
 
     // 10. Setup HTTP API server
@@ -240,8 +251,11 @@ async fn main() -> Result<()> {
     let publisher_queue_url = first_queue_url.expect("At least one queue must be configured");
     let publisher = Arc::new(SqsPublisher::new(sqs_client, publisher_queue_url));
 
-    // Create circuit breaker registry for endpoint tracking
-    let circuit_breaker_registry = Arc::new(CircuitBreakerRegistry::default());
+    // Use the QueueManager's shared circuit breaker registry so the monitoring
+    // API reads the *same* breakers the pools record into (and operator
+    // reset/reset_all act on live state). Previously this was a separate
+    // CircuitBreakerRegistry::default() that no pool ever wrote to.
+    let circuit_breaker_registry = queue_manager.circuit_breaker_registry().clone();
 
     // Initialize authentication from environment variables
     let auth_config = fc_router::api::AuthConfig::from_env();

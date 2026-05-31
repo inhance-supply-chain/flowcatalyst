@@ -91,6 +91,13 @@ impl Default for LifecycleConfig {
 /// Manages lifecycle tasks for the message router
 pub struct LifecycleManager {
     shutdown_tx: broadcast::Sender<()>,
+    /// Handles for every background task spawned by this manager. `shutdown()`
+    /// signals the broadcast channel and then bounded-joins these so callers
+    /// can observe that background work has actually stopped (previously the
+    /// handles were dropped and shutdown only *signalled*, never waited). The
+    /// join is time-boxed: a task stuck mid-`.await` is left to be reaped at
+    /// process exit rather than blocking shutdown indefinitely.
+    tasks: Vec<tokio::task::JoinHandle<()>>,
     warning_service: Arc<WarningService>,
     health_service: Arc<HealthService>,
     /// Optional config sync service
@@ -108,11 +115,16 @@ pub struct LifecycleManager {
 }
 
 impl LifecycleManager {
+    /// How long `shutdown()` waits for background tasks to finish after
+    /// signalling, before leaving any stragglers to process-exit cleanup.
+    const SHUTDOWN_JOIN_TIMEOUT: Duration = Duration::from_secs(10);
+
     /// Create a new lifecycle manager without starting tasks
     pub fn new(warning_service: Arc<WarningService>, health_service: Arc<HealthService>) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             shutdown_tx,
+            tasks: Vec::new(),
             warning_service,
             health_service,
             config_sync: None,
@@ -133,6 +145,7 @@ impl LifecycleManager {
         config: LifecycleConfig,
     ) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
+        let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
         // Memory health monitor
         {
@@ -141,7 +154,7 @@ impl LifecycleManager {
             let mut shutdown_rx = shutdown_tx.subscribe();
             let interval = config.memory_health_interval;
 
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
 
                 loop {
@@ -163,7 +176,7 @@ impl LifecycleManager {
                         }
                     }
                 }
-            });
+            }));
         }
 
         // Consumer health monitor with auto-restart
@@ -175,7 +188,7 @@ impl LifecycleManager {
             let interval = config.consumer_health_interval;
             let restart_delay = config.consumer_restart_delay;
 
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
                 let mut restart_attempts: std::collections::HashMap<String, u32> =
                     std::collections::HashMap::new();
@@ -233,7 +246,7 @@ impl LifecycleManager {
                         }
                     }
                 }
-            });
+            }));
         }
 
         // Warning service cleanup
@@ -242,7 +255,7 @@ impl LifecycleManager {
             let mut shutdown_rx = shutdown_tx.subscribe();
             let interval = config.warning_cleanup_interval;
 
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
 
                 loop {
@@ -257,7 +270,7 @@ impl LifecycleManager {
                         }
                     }
                 }
-            });
+            }));
         }
 
         // Health report logger
@@ -267,7 +280,7 @@ impl LifecycleManager {
             let mut shutdown_rx = shutdown_tx.subscribe();
             let interval = config.health_report_interval;
 
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
 
                 loop {
@@ -292,7 +305,7 @@ impl LifecycleManager {
                         }
                     }
                 }
-            });
+            }));
         }
 
         // Stale entry reaper (in_pipeline, pending_delete, circuit breakers, health service)
@@ -304,7 +317,7 @@ impl LifecycleManager {
             let in_pipeline_max_age = config.in_pipeline_max_age;
             let pending_delete_max_age = config.pending_delete_max_age;
 
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
 
                 loop {
@@ -340,13 +353,14 @@ impl LifecycleManager {
                         }
                     }
                 }
-            });
+            }));
         }
 
         info!("Lifecycle manager started with all background tasks");
 
         Self {
             shutdown_tx,
+            tasks,
             warning_service,
             health_service,
             config_sync: None,
@@ -375,7 +389,9 @@ impl LifecycleManager {
         if let Some(ref sync_service) = config_sync {
             if sync_service.is_enabled() {
                 info!("Starting configuration sync background task");
-                spawn_config_sync_task(sync_service.clone(), lifecycle.shutdown_tx.clone());
+                let handle =
+                    spawn_config_sync_task(sync_service.clone(), lifecycle.shutdown_tx.clone());
+                lifecycle.tasks.push(handle);
             }
         }
 
@@ -383,7 +399,9 @@ impl LifecycleManager {
         if let Some(ref standby_proc) = standby {
             if standby_proc.is_standby_enabled() {
                 info!("Starting leadership monitor background task");
-                spawn_leadership_monitor(standby_proc.clone(), lifecycle.shutdown_tx.clone());
+                let handle =
+                    spawn_leadership_monitor(standby_proc.clone(), lifecycle.shutdown_tx.clone());
+                lifecycle.tasks.push(handle);
             }
         }
 
@@ -429,8 +447,14 @@ impl LifecycleManager {
         }
     }
 
-    /// Signal shutdown to all lifecycle tasks
-    pub async fn shutdown(&self) {
+    /// Signal shutdown to all lifecycle tasks, then bounded-join them.
+    ///
+    /// Sends the broadcast (every task breaks its `select!` loop), then waits
+    /// up to [`Self::SHUTDOWN_JOIN_TIMEOUT`] for the spawned tasks to actually
+    /// finish. A task stuck mid-`.await` past the timeout is left to be reaped
+    /// at process exit rather than blocking shutdown — so this is strictly more
+    /// graceful than the old fire-and-forget `send()`, never less.
+    pub async fn shutdown(&mut self) {
         info!("Lifecycle manager shutting down...");
 
         // Shutdown standby processor first
@@ -440,6 +464,24 @@ impl LifecycleManager {
 
         // Signal all tasks to stop
         let _ = self.shutdown_tx.send(());
+
+        // Bounded-join: wait for the background loops to exit, but don't hang
+        // shutdown on a task that's mid-flight past the deadline.
+        let handles = std::mem::take(&mut self.tasks);
+        if !handles.is_empty() {
+            let joined = tokio::time::timeout(
+                Self::SHUTDOWN_JOIN_TIMEOUT,
+                futures::future::join_all(handles),
+            )
+            .await;
+            match joined {
+                Ok(_) => info!("All lifecycle tasks stopped"),
+                Err(_) => warn!(
+                    timeout_secs = Self::SHUTDOWN_JOIN_TIMEOUT.as_secs(),
+                    "Lifecycle tasks did not all stop within timeout — leaving remainder to process exit"
+                ),
+            }
+        }
     }
 
     /// Get the shutdown sender for spawning additional tasks
@@ -460,7 +502,7 @@ impl LifecycleManager {
         // Run at the same cadence as warning cleanup (5 min)
         let interval = Duration::from_secs(300);
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
 
             loop {
@@ -478,6 +520,7 @@ impl LifecycleManager {
                 }
             }
         });
+        self.tasks.push(handle);
     }
 
     /// Set the OIDC stores for periodic expired-entry cleanup.
@@ -495,7 +538,7 @@ impl LifecycleManager {
         // Clean up every 60 seconds
         let interval = Duration::from_secs(60);
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
 
             loop {
@@ -511,6 +554,7 @@ impl LifecycleManager {
                 }
             }
         });
+        self.tasks.push(handle);
     }
 }
 

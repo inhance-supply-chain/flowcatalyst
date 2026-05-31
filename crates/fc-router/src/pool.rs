@@ -153,9 +153,6 @@ pub struct ProcessPool {
     /// Per-message-group handlers (lightweight: VecDeque + processing flag)
     group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
 
-    /// Track in-flight message groups
-    in_flight_groups: DashSet<Arc<str>>,
-
     /// Batch+group failure tracking for cascading NACKs
     failed_batch_groups: Arc<DashSet<BatchGroupKey>>,
 
@@ -184,13 +181,32 @@ pub struct ProcessPool {
 
     /// Per-endpoint circuit breaker registry — shared across pools, keyed by mediation target URL.
     circuit_breaker_registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
-
-    /// Warning service for generating warnings
-    warning_service: Arc<crate::warning::WarningService>,
 }
 
 impl ProcessPool {
+    /// Construct a pool with a private circuit breaker registry.
+    /// **Test/standalone use only** — production pools are created by the
+    /// `QueueManager` via [`ProcessPool::with_dependencies`] so they share the
+    /// manager's single registry. Keeping this thin constructor lets unit tests
+    /// build a pool without plumbing collaborators they don't exercise.
     pub fn new(config: PoolConfig, mediator: Arc<dyn Mediator>) -> Self {
+        Self::with_dependencies(
+            config,
+            mediator,
+            Arc::new(crate::circuit_breaker_registry::CircuitBreakerRegistry::default()),
+        )
+    }
+
+    /// Construct a fully-wired pool. The `QueueManager` passes its shared
+    /// circuit breaker registry here, so breaker state is shared across all
+    /// pools (and visible to monitoring). Requiring the registry up front makes
+    /// the previously-possible "pool created without the shared registry" bug
+    /// unrepresentable on the production path.
+    pub fn with_dependencies(
+        config: PoolConfig,
+        mediator: Arc<dyn Mediator>,
+        circuit_breaker_registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
+    ) -> Self {
         // Java: effectiveConcurrency() — if concurrency is 0, fall back to max(rateLimitPerMinute/60, 1)
         let concurrency_val = if config.concurrency == 0 {
             config
@@ -209,7 +225,6 @@ impl ProcessPool {
             concurrency: AtomicU32::new(concurrency_val),
             semaphore: Arc::new(Semaphore::new(concurrency_val as usize)),
             group_handlers: Arc::new(DashMap::new()),
-            in_flight_groups: DashSet::new(),
             failed_batch_groups: Arc::new(DashSet::new()),
             batch_group_message_count: Arc::new(DashMap::new()),
             rate_limiter: Arc::new(ArcSwapOption::new(initial_rate_limit)),
@@ -217,33 +232,8 @@ impl ProcessPool {
             queue_size: Arc::new(AtomicU32::new(0)),
             active_workers: Arc::new(AtomicU32::new(0)),
             metrics_collector: Arc::new(PoolMetricsCollector::new()),
-            circuit_breaker_registry: Arc::new(
-                crate::circuit_breaker_registry::CircuitBreakerRegistry::default(),
-            ),
-            warning_service: Arc::new(crate::warning::WarningService::noop()),
+            circuit_breaker_registry,
         }
-    }
-
-    /// Set the shared circuit breaker registry
-    pub fn set_circuit_breaker_registry(
-        &mut self,
-        registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
-    ) {
-        self.circuit_breaker_registry = registry;
-    }
-
-    /// Set the warning service for generating warnings
-    pub fn with_warning_service(
-        mut self,
-        warning_service: Arc<crate::warning::WarningService>,
-    ) -> Self {
-        self.warning_service = warning_service;
-        self
-    }
-
-    /// Set warning service after construction
-    pub fn set_warning_service(&mut self, warning_service: Arc<crate::warning::WarningService>) {
-        self.warning_service = warning_service;
     }
 
     /// Start the pool
@@ -504,7 +494,6 @@ impl ProcessPool {
         let mediator = self.mediator.clone();
         let queue_size = self.queue_size.clone();
         let active_workers = self.active_workers.clone();
-        let in_flight_groups = self.in_flight_groups.clone();
         let failed_batch_groups = self.failed_batch_groups.clone();
         let batch_group_message_count = self.batch_group_message_count.clone();
         let rate_limiter = self.rate_limiter.clone();
@@ -531,7 +520,6 @@ impl ProcessPool {
             struct PanicGuard {
                 group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
                 group_id: Arc<str>,
-                in_flight_groups: DashSet<Arc<str>>,
                 active_workers: Arc<AtomicU32>,
                 /// Whether a semaphore permit was held when panic occurred
                 holding_permit: bool,
@@ -566,7 +554,6 @@ impl ProcessPool {
                         error!(group_id = %self.group_id, "Drain task exited abnormally — reset processing flag");
                     }
                     if self.holding_permit {
-                        self.in_flight_groups.remove(&self.group_id);
                         self.active_workers.fetch_sub(1, Ordering::Relaxed);
                     }
                 }
@@ -574,7 +561,6 @@ impl ProcessPool {
             let mut panic_guard = PanicGuard {
                 group_handlers: group_handlers.clone(),
                 group_id: group_id.clone(),
-                in_flight_groups: in_flight_groups.clone(),
                 active_workers: active_workers.clone(),
                 holding_permit: false,
                 active: true,
@@ -667,7 +653,6 @@ impl ProcessPool {
                 };
 
                 active_workers.fetch_add(1, Ordering::Relaxed);
-                in_flight_groups.insert(group_id.clone());
                 panic_guard.holding_permit = true;
 
                 // Check per-endpoint circuit breaker before attempting mediation
@@ -791,7 +776,6 @@ impl ProcessPool {
                 }
 
                 // Cleanup
-                in_flight_groups.remove(&group_id);
                 active_workers.fetch_sub(1, Ordering::Relaxed);
                 panic_guard.holding_permit = false;
                 drop(permit);

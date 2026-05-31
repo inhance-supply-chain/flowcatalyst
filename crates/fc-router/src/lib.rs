@@ -39,7 +39,7 @@ pub use circuit_breaker_registry::{
     CircuitBreakerConfig, CircuitBreakerRegistry, CircuitBreakerState, CircuitBreakerStats,
 };
 pub use config_sync::{
-    spawn_config_sync_task, ConfigSyncConfig, ConfigSyncResult, ConfigSyncService,
+    spawn_config_sync_task, ConfigSyncConfig, ConfigSyncError, ConfigSyncResult, ConfigSyncService,
 };
 pub use error::RouterError;
 pub use health::{HealthService, HealthServiceConfig};

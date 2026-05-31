@@ -24,19 +24,26 @@ use fc_common::{
 use fc_queue::{QueueConsumer, QueueMetrics};
 use utoipa::ToSchema;
 
+use crate::circuit_breaker_registry::CircuitBreakerRegistry;
 use crate::error::RouterError;
 use crate::mediator::{HttpMediator, HttpMediatorConfig, Mediator};
 use crate::pool::ProcessPool;
 use crate::warning::WarningService;
 use crate::Result;
 
-/// How `QueueManager` obtains a mediator for each new pool.
-enum MediatorSource {
-    /// Build a fresh `HttpMediator` per pool (production path).
-    PerPool(HttpMediatorConfig),
-    /// All pools share this mediator instance (test seam for mocks).
-    Shared(Arc<dyn Mediator + 'static>),
-}
+/// Builds a mediator for each new pool, given the manager's current warning
+/// service (read at pool-creation time, *after* wiring — so the real service
+/// reaches the mediator, not the noop default).
+///
+/// Production path captures an `HttpMediatorConfig` and builds a **fresh**
+/// `HttpMediator` per call, so each pool gets its own reqwest `Client` /
+/// connection pool — transport isolation that sidesteps AWS's 128-stream cap
+/// on a single HTTP/2 connection. Test path captures a shared mock and returns
+/// the same instance every call. This replaces the old `MediatorSource` enum
+/// with the boxed-factory idiom already used for the per-host client builder
+/// in `http_pool.rs`.
+type MediatorFactory =
+    Arc<dyn Fn(&Arc<WarningService>) -> Arc<dyn Mediator + 'static> + Send + Sync>;
 
 /// Callback that the pool worker calls directly when processing completes.
 /// Reads the latest receipt handle from in_pipeline (may have been swapped by
@@ -225,17 +232,22 @@ pub struct QueueManager {
     /// Wrapped in Arc so spawned tasks can share the same map
     app_message_to_pipeline_key: Arc<DashMap<String, String>>,
 
-    /// Process pools by code
+    /// Active process pools by code. Routing reads this map directly; a pool
+    /// removed during a config reload is *moved* out of here into
+    /// `draining_pools`, so this never contains a draining pool and the hot
+    /// routing path needs no status filter.
     pools: DashMap<String, Arc<ProcessPool>>,
 
-    /// Pools that are draining (removed from config, waiting for in-flight to complete)
+    /// Pools removed from config, kept alive until their in-flight work
+    /// finishes. Read by `cleanup_draining_pools`, which drops them once
+    /// `is_fully_drained()`. (Consumers don't need an equivalent map: a phased-
+    /// out consumer is stopped via `stop()` and its still-running poll task
+    /// owns the only `Arc` it needs to finish in flight — there's nothing for
+    /// the manager to hold or periodically clean up.)
     draining_pools: DashMap<String, Arc<ProcessPool>>,
 
     /// Queue consumers (RwLock for async-safe access)
     consumers: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
-
-    /// Consumers that are draining (removed from config, waiting for in-flight to complete)
-    draining_consumers: RwLock<HashMap<String, Arc<dyn QueueConsumer + Send + Sync>>>,
 
     /// Current pool configurations (for detecting changes)
     pool_configs: RwLock<HashMap<String, PoolConfig>>,
@@ -247,17 +259,8 @@ pub struct QueueManager {
     /// If None, new queues in config will be logged but not auto-created
     consumer_factory: Option<Arc<dyn ConsumerFactory + Send + Sync>>,
 
-    /// How to build a mediator for each new pool.
-    ///
-    /// Production path: `MediatorSource::PerPool(config)` — each pool gets
-    /// its own `HttpMediator` with its own reqwest `Client` / connection
-    /// pool. Transport isolation between pools avoids the AWS 128-stream
-    /// cap on a single HTTP/2 connection.
-    ///
-    /// Test path: `MediatorSource::Shared(mediator)` — all pools share
-    /// one mediator instance, used by tests that inject mocks via
-    /// `QueueManager::with_shared_mediator_for_testing`.
-    mediator_source: MediatorSource,
+    /// How to build a mediator for each new pool. See [`MediatorFactory`].
+    mediator_factory: MediatorFactory,
 
     /// Default pool code for messages without explicit pool
     default_pool_code: String,
@@ -293,15 +296,156 @@ pub struct QueueManager {
     /// Warning service for generating operational warnings
     warning_service: Arc<WarningService>,
 
+    /// Shared per-endpoint circuit breaker registry.
+    ///
+    /// One instance is shared across every pool this manager creates, so a
+    /// breaker that trips for an endpoint protects *all* pools targeting it
+    /// (mirrors Java's single `circuitBreakers` passed to every `ProcessPool`).
+    /// The same instance is what the monitoring API reads (`get_all_stats`)
+    /// and what operator `reset`/`reset_all` act on, and what the lifecycle
+    /// idle-eviction task prunes — expose it via [`Self::circuit_breaker_registry`]
+    /// so binaries wire one registry everywhere instead of three disconnected
+    /// `CircuitBreakerRegistry::default()` instances.
+    circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
+
     /// Health service for recording consumer poll times
     health_service: Option<Arc<crate::health::HealthService>>,
 
 }
 
+/// Builder for [`QueueManager`]. Produces a fully-wired, immutable manager —
+/// preferred over `new` + a sequence of `set_*` calls (two-phase mutation).
+///
+/// Because the warning service and circuit breaker registry are fixed before
+/// `build`, every pool the manager later creates is guaranteed to share them:
+/// there is no window in which a pool could be created against the noop warning
+/// service or a private breaker registry. All knobs default to the same values
+/// the legacy constructors used, so `QueueManager::builder(cfg).build()` is
+/// byte-for-byte equivalent to the old `QueueManager::new(cfg)`.
+pub struct QueueManagerBuilder {
+    mediator_factory: MediatorFactory,
+    warning_service: Arc<WarningService>,
+    circuit_breaker_registry: Arc<CircuitBreakerRegistry>,
+    health_service: Option<Arc<crate::health::HealthService>>,
+    consumer_factory: Option<Arc<dyn ConsumerFactory + Send + Sync>>,
+    max_pools: usize,
+    pool_warning_threshold: usize,
+    stall_config: StallConfig,
+}
+
+impl QueueManagerBuilder {
+    fn from_factory(mediator_factory: MediatorFactory) -> Self {
+        Self {
+            mediator_factory,
+            warning_service: Arc::new(WarningService::noop()),
+            circuit_breaker_registry: Arc::new(CircuitBreakerRegistry::default()),
+            health_service: None,
+            consumer_factory: None,
+            // Java defaults: max-pools = 10000, pool-warning-threshold = 5000
+            max_pools: 10000,
+            pool_warning_threshold: 5000,
+            stall_config: StallConfig::default(),
+        }
+    }
+
+    /// Warning service shared by the manager, its pools, and the per-pool
+    /// mediators. Defaults to a noop sink.
+    pub fn warning_service(mut self, warning_service: Arc<WarningService>) -> Self {
+        self.warning_service = warning_service;
+        self
+    }
+
+    /// Shared per-endpoint circuit breaker registry (see
+    /// [`QueueManager::circuit_breaker_registry`]). Defaults to a fresh one.
+    pub fn circuit_breaker_registry(mut self, registry: Arc<CircuitBreakerRegistry>) -> Self {
+        self.circuit_breaker_registry = registry;
+        self
+    }
+
+    /// Health service for recording consumer poll times.
+    pub fn health_service(mut self, health_service: Arc<crate::health::HealthService>) -> Self {
+        self.health_service = Some(health_service);
+        self
+    }
+
+    /// Consumer factory for hot-creating queues during config sync.
+    pub fn consumer_factory(mut self, factory: Arc<dyn ConsumerFactory + Send + Sync>) -> Self {
+        self.consumer_factory = Some(factory);
+        self
+    }
+
+    /// Maximum number of pools allowed (Java default: 10000).
+    pub fn max_pools(mut self, max_pools: usize) -> Self {
+        self.max_pools = max_pools;
+        self
+    }
+
+    /// Pool-count warning threshold (Java default: 5000).
+    pub fn pool_warning_threshold(mut self, threshold: usize) -> Self {
+        self.pool_warning_threshold = threshold;
+        self
+    }
+
+    /// Stall-detection configuration.
+    pub fn stall_config(mut self, stall_config: StallConfig) -> Self {
+        self.stall_config = stall_config;
+        self
+    }
+
+    /// Finalise into an immutable, fully-wired [`QueueManager`]. This is the
+    /// single struct-literal that all constructors funnel through.
+    pub fn build(self) -> QueueManager {
+        let (shutdown_tx, _) = broadcast::channel(1);
+
+        QueueManager {
+            in_pipeline: Arc::new(DashMap::new()),
+            app_message_to_pipeline_key: Arc::new(DashMap::new()),
+            pools: DashMap::new(),
+            draining_pools: DashMap::new(),
+            consumers: RwLock::new(HashMap::new()),
+            pool_configs: RwLock::new(HashMap::new()),
+            queue_configs: RwLock::new(HashMap::new()),
+            consumer_factory: self.consumer_factory,
+            mediator_factory: self.mediator_factory,
+            default_pool_code: "DEFAULT-POOL".to_string(), // Java: DEFAULT_POOL_CODE
+            running: AtomicBool::new(true),
+            shutdown_tx,
+            batch_counter: std::sync::atomic::AtomicU64::new(0),
+            pending_delete_broker_ids: Arc::new(Mutex::new(HashMap::new())),
+            max_pools: self.max_pools,
+            pool_warning_threshold: self.pool_warning_threshold,
+            stall_config: self.stall_config,
+            warning_service: self.warning_service,
+            circuit_breaker_registry: self.circuit_breaker_registry,
+            health_service: self.health_service,
+        }
+    }
+}
+
 impl QueueManager {
+    /// Start building a manager that creates a **fresh** `HttpMediator` per
+    /// pool (production path). Prefer this builder over `new` + `set_*`.
+    pub fn builder(mediator_config: HttpMediatorConfig) -> QueueManagerBuilder {
+        let factory: MediatorFactory = Arc::new(move |ws: &Arc<WarningService>| {
+            Arc::new(
+                HttpMediator::with_config(mediator_config.clone())
+                    .with_warning_service(ws.clone()),
+            ) as Arc<dyn Mediator + 'static>
+        });
+        QueueManagerBuilder::from_factory(factory)
+    }
+
+    /// Start building a manager where every pool shares one mediator instance
+    /// (test seam for injecting mocks / instrumenting mediator calls).
+    pub fn builder_with_shared_mediator(
+        mediator: Arc<dyn Mediator + 'static>,
+    ) -> QueueManagerBuilder {
+        let factory: MediatorFactory = Arc::new(move |_ws: &Arc<WarningService>| mediator.clone());
+        QueueManagerBuilder::from_factory(factory)
+    }
+
     pub fn new(mediator_config: HttpMediatorConfig) -> Self {
-        // Java defaults: max-pools = 10000, pool-warning-threshold = 5000
-        Self::with_limits(mediator_config, 10000, 5000)
+        Self::builder(mediator_config).build()
     }
 
     pub fn with_limits(
@@ -309,12 +453,10 @@ impl QueueManager {
         max_pools: usize,
         pool_warning_threshold: usize,
     ) -> Self {
-        Self::with_config(
-            mediator_config,
-            max_pools,
-            pool_warning_threshold,
-            StallConfig::default(),
-        )
+        Self::builder(mediator_config)
+            .max_pools(max_pools)
+            .pool_warning_threshold(pool_warning_threshold)
+            .build()
     }
 
     pub fn with_config(
@@ -323,45 +465,18 @@ impl QueueManager {
         pool_warning_threshold: usize,
         stall_config: StallConfig,
     ) -> Self {
-        let (shutdown_tx, _) = broadcast::channel(1);
-
-        Self {
-            in_pipeline: Arc::new(DashMap::new()),
-            app_message_to_pipeline_key: Arc::new(DashMap::new()),
-            pools: DashMap::new(),
-            draining_pools: DashMap::new(),
-            consumers: RwLock::new(HashMap::new()),
-            draining_consumers: RwLock::new(HashMap::new()),
-            pool_configs: RwLock::new(HashMap::new()),
-            queue_configs: RwLock::new(HashMap::new()),
-            consumer_factory: None,
-            mediator_source: MediatorSource::PerPool(mediator_config),
-            default_pool_code: "DEFAULT-POOL".to_string(), // Java: DEFAULT_POOL_CODE
-            running: AtomicBool::new(true),
-            shutdown_tx,
-            batch_counter: std::sync::atomic::AtomicU64::new(0),
-            pending_delete_broker_ids: Arc::new(Mutex::new(HashMap::new())),
-            max_pools,
-            pool_warning_threshold,
-            stall_config,
-            warning_service: Arc::new(WarningService::noop()),
-            health_service: None,
-        }
+        Self::builder(mediator_config)
+            .max_pools(max_pools)
+            .pool_warning_threshold(pool_warning_threshold)
+            .stall_config(stall_config)
+            .build()
     }
 
-    /// Set the consumer factory for creating new queue consumers during config sync
-    pub fn set_consumer_factory(&mut self, factory: Arc<dyn ConsumerFactory + Send + Sync>) {
-        self.consumer_factory = Some(factory);
-    }
-
-    /// Set the warning service
-    pub fn set_warning_service(&mut self, warning_service: Arc<WarningService>) {
-        self.warning_service = warning_service;
-    }
-
-    /// Set the health service (for recording consumer poll times)
-    pub fn set_health_service(&mut self, health_service: Arc<crate::health::HealthService>) {
-        self.health_service = Some(health_service);
+    /// Get the shared circuit breaker registry. This is the instance every
+    /// pool records into; wire it into the monitoring API and lifecycle
+    /// eviction so they observe/act on the real breaker state.
+    pub fn circuit_breaker_registry(&self) -> &Arc<CircuitBreakerRegistry> {
+        &self.circuit_breaker_registry
     }
 
     /// Get warning service reference
@@ -369,48 +484,20 @@ impl QueueManager {
         &self.warning_service
     }
 
-    /// Build a mediator instance for a pool. Production path builds a fresh
-    /// `HttpMediator` per pool (its own reqwest `Client` / connection pool).
-    /// Test path returns a shared mock.
+    /// Build a mediator instance for a pool via the configured factory,
+    /// passing the manager's current warning service so per-pool mediators
+    /// emit through the real sink (see [`MediatorFactory`]).
     fn build_mediator(&self) -> Arc<dyn Mediator + 'static> {
-        match &self.mediator_source {
-            MediatorSource::PerPool(config) => Arc::new(
-                HttpMediator::with_config(config.clone())
-                    .with_warning_service(self.warning_service.clone()),
-            ),
-            MediatorSource::Shared(m) => m.clone(),
-        }
+        (self.mediator_factory)(&self.warning_service)
     }
 
     /// Test-only constructor: every pool shares the supplied mediator. Use
     /// this when you need to inject a mock or instrument mediator calls.
-    /// Production code should use [`QueueManager::new`] and let the manager
-    /// build a mediator per pool.
+    /// Production code should use [`QueueManager::builder`] (or [`new`]) and
+    /// let the manager build a mediator per pool.
     #[doc(hidden)]
     pub fn with_shared_mediator_for_testing(mediator: Arc<dyn Mediator + 'static>) -> Self {
-        let (shutdown_tx, _) = broadcast::channel(1);
-        Self {
-            in_pipeline: Arc::new(DashMap::new()),
-            app_message_to_pipeline_key: Arc::new(DashMap::new()),
-            pools: DashMap::new(),
-            draining_pools: DashMap::new(),
-            consumers: RwLock::new(HashMap::new()),
-            draining_consumers: RwLock::new(HashMap::new()),
-            pool_configs: RwLock::new(HashMap::new()),
-            queue_configs: RwLock::new(HashMap::new()),
-            consumer_factory: None,
-            mediator_source: MediatorSource::Shared(mediator),
-            default_pool_code: "DEFAULT-POOL".to_string(),
-            running: AtomicBool::new(true),
-            shutdown_tx,
-            batch_counter: std::sync::atomic::AtomicU64::new(0),
-            pending_delete_broker_ids: Arc::new(Mutex::new(HashMap::new())),
-            max_pools: 10000,
-            pool_warning_threshold: 5000,
-            stall_config: StallConfig::default(),
-            warning_service: Arc::new(WarningService::noop()),
-            health_service: None,
-        }
+        Self::builder_with_shared_mediator(mediator).build()
     }
 
     /// Add a queue consumer
@@ -613,7 +700,6 @@ impl QueueManager {
 
         let mut queue_configs = self.queue_configs.write().await;
         let mut consumers = self.consumers.write().await;
-        let mut draining = self.draining_consumers.write().await;
 
         // Phase out consumers for queues that no longer exist
         let existing_queues: Vec<String> = consumers.keys().cloned().collect();
@@ -622,15 +708,16 @@ impl QueueManager {
                 info!(queue_id = %queue_id, "Phasing out consumer for removed queue");
 
                 if let Some(consumer) = consumers.remove(&queue_id) {
-                    // Stop consumer (sets running=false, initiates graceful shutdown)
+                    // Stop consumer: sets running=false and initiates graceful
+                    // shutdown. The consumer's own poll task owns the Arc it
+                    // needs to finish any in-flight poll, so once we drop our
+                    // reference here there is nothing further for the manager
+                    // to track — the task drains and exits on its own.
                     consumer.stop().await;
-
-                    // Move to draining consumers for async cleanup
-                    draining.insert(queue_id.clone(), consumer);
                     queue_configs.remove(&queue_id);
                     queues_removed += 1;
 
-                    info!(queue_id = %queue_id, "Consumer moved to draining state");
+                    info!(queue_id = %queue_id, "Consumer stopped and removed");
                 }
             }
         }
@@ -682,7 +769,6 @@ impl QueueManager {
         // Release write locks before spawning tasks
         drop(consumers);
         drop(queue_configs);
-        drop(draining);
 
         // Spawn poll tasks for newly created consumers.
         for consumer in new_consumers {
@@ -728,7 +814,15 @@ impl QueueManager {
             rate_limit_per_minute: None,
         });
 
-        let pool = ProcessPool::new(pool_config.clone(), self.build_mediator());
+        // Share the manager's single registry so breaker state is shared
+        // across pools and surfaced to monitoring (not a fresh private default).
+        // The per-pool mediator already carries the real warning service via
+        // `build_mediator`.
+        let pool = ProcessPool::with_dependencies(
+            pool_config.clone(),
+            self.build_mediator(),
+            self.circuit_breaker_registry.clone(),
+        );
 
         let pool_arc = Arc::new(pool);
         pool_arc.start().await;
@@ -1695,7 +1789,14 @@ impl QueueManager {
         if pool_exists {
             // For now, we recreate the pool with new config
             // In production, you might want to drain first
-            let new_pool = ProcessPool::new(config.clone(), self.build_mediator());
+            // Share the manager's single registry (see get_or_create_pool) — a
+            // reconfigured pool must keep recording into the shared breaker, not
+            // a fresh private default.
+            let new_pool = ProcessPool::with_dependencies(
+                config.clone(),
+                self.build_mediator(),
+                self.circuit_breaker_registry.clone(),
+            );
             let pool_arc = Arc::new(new_pool);
             pool_arc.start().await;
 
@@ -2098,6 +2199,62 @@ mod callback_drop_tests {
             consumer.nacks.load(AtomicOrdering::SeqCst),
             1,
             "no double-nack on drop after explicit nack"
+        );
+    }
+
+    /// Regression: every pool the manager creates must record into the
+    /// manager's single shared circuit breaker registry — not a private
+    /// `CircuitBreakerRegistry::default()` per pool. Otherwise a breaker
+    /// tripping for an endpoint in one pool wouldn't protect other pools
+    /// targeting the same endpoint, and the monitoring API (which reads the
+    /// manager's registry) would show empty stats. Mirrors Java's single
+    /// `circuitBreakers` shared by every `ProcessPool`.
+    #[tokio::test]
+    async fn pools_share_managers_circuit_breaker_registry() {
+        // PerPool mediator path; no network occurs (we only record breaker
+        // failures directly and never mediate a message).
+        let manager = QueueManager::new(HttpMediatorConfig::production());
+
+        let pool_a = manager
+            .get_or_create_pool("POOL-A", None)
+            .await
+            .expect("create pool A");
+        let pool_b = manager
+            .get_or_create_pool("POOL-B", None)
+            .await
+            .expect("create pool B");
+
+        // Pointer identity: both pools and the manager hold the same Arc.
+        assert!(
+            Arc::ptr_eq(
+                pool_a.circuit_breaker_registry(),
+                manager.circuit_breaker_registry()
+            ),
+            "pool A must share the manager's circuit breaker registry"
+        );
+        assert!(
+            Arc::ptr_eq(
+                pool_b.circuit_breaker_registry(),
+                manager.circuit_breaker_registry()
+            ),
+            "pool B must share the manager's circuit breaker registry"
+        );
+
+        // Behavioural cross-pool protection: failures recorded while pool A
+        // mediates an endpoint trip the breaker, and pool B targeting the same
+        // endpoint immediately sees it open.
+        let endpoint = "http://shared.example/api";
+        for _ in 0..20 {
+            pool_a.circuit_breaker_registry().record_failure(endpoint);
+        }
+        assert_eq!(
+            manager.circuit_breaker_registry().get_state(endpoint),
+            Some(crate::CircuitBreakerState::Open),
+            "failures recorded via a pool must be visible through the manager's registry"
+        );
+        assert!(
+            !pool_b.circuit_breaker_registry().allow_request(endpoint),
+            "pool B must observe the breaker opened by pool A's failures"
         );
     }
 }
