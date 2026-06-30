@@ -17,6 +17,7 @@ const form = ref({
 	clientName: "",
 	clientType: "PUBLIC" as ClientType,
 	redirectUris: [] as string[],
+	postLogoutRedirectUris: [] as string[],
 	allowedOrigins: [] as string[],
 	grantTypes: ["authorization_code", "refresh_token"],
 	defaultScopes: ["openid", "profile", "email"],
@@ -25,6 +26,7 @@ const form = ref({
 });
 
 const newRedirectUri = ref("");
+const newPostLogoutRedirectUri = ref("");
 const newAllowedOrigin = ref("");
 
 // Secret dialog state
@@ -100,6 +102,24 @@ function removeRedirectUri(uri: string) {
 	form.value.redirectUris = form.value.redirectUris.filter((u) => u !== uri);
 }
 
+function addPostLogoutRedirectUri() {
+	const uri = newPostLogoutRedirectUri.value.trim();
+	if (uri && !form.value.postLogoutRedirectUris.includes(uri)) {
+		try {
+			new URL(uri);
+			form.value.postLogoutRedirectUris.push(uri);
+			newPostLogoutRedirectUri.value = "";
+		} catch {
+		}
+	}
+}
+
+function removePostLogoutRedirectUri(uri: string) {
+	form.value.postLogoutRedirectUris = form.value.postLogoutRedirectUris.filter(
+		(u) => u !== uri,
+	);
+}
+
 function addAllowedOrigin() {
 	const origin = newAllowedOrigin.value.trim();
 	if (origin && !form.value.allowedOrigins.includes(origin)) {
@@ -136,6 +156,10 @@ async function createClient() {
 			clientName: form.value.clientName.trim(),
 			clientType: form.value.clientType,
 			redirectUris: form.value.redirectUris,
+			postLogoutRedirectUris:
+				form.value.postLogoutRedirectUris.length > 0
+					? form.value.postLogoutRedirectUris
+					: undefined,
 			allowedOrigins:
 				form.value.allowedOrigins.length > 0
 					? form.value.allowedOrigins
@@ -266,6 +290,36 @@ function closeSecretDialog() {
           <small class="field-help"
             >Allowed callback URLs for OAuth redirects. Must use HTTPS (except localhost).</small
           >
+        </div>
+
+        <div class="field">
+          <label>Post-Logout Redirect URIs</label>
+          <div class="redirect-uri-input">
+            <InputText
+              v-model="newPostLogoutRedirectUri"
+              placeholder="https://app.example.com/logged-out"
+              class="flex-grow"
+              @keyup.enter="addPostLogoutRedirectUri"
+            />
+            <Button
+              icon="pi pi-plus"
+              @click="addPostLogoutRedirectUri"
+              :disabled="!newPostLogoutRedirectUri.trim()"
+            />
+          </div>
+          <div v-if="form.postLogoutRedirectUris.length > 0" class="uri-list">
+            <Chip
+              v-for="uri in form.postLogoutRedirectUris"
+              :key="uri"
+              :label="uri"
+              removable
+              @remove="removePostLogoutRedirectUri(uri)"
+            />
+          </div>
+          <small class="field-help">
+            Allowed URLs for OIDC RP-Initiated Logout (post_logout_redirect_uri). Required for
+            session-end redirects — callers must also send id_token_hint.
+          </small>
         </div>
 
         <div class="field">

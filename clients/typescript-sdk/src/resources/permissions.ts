@@ -5,16 +5,16 @@
  */
 
 import type { ResultAsync } from "neverthrow";
-import type { SdkError } from "../errors";
-import type { FlowCatalystClient } from "../client";
-import * as sdk from "../generated/sdk.gen";
+import type { SdkError } from "../errors.js";
+import type { FlowCatalystClient } from "../client.js";
+import * as sdk from "../generated/sdk.gen.js";
 import type {
-	GetApiAdminRolesPermissionsResponse,
-	GetApiAdminRolesPermissionsByPermissionResponse,
-} from "../generated/types.gen";
+	GetApiRolesPermissionsResponse,
+	GetApiRolesPermissionsByPermissionResponse,
+} from "../generated/types.gen.js";
 
-export type PermissionListResponse = GetApiAdminRolesPermissionsResponse;
-export type PermissionDto = GetApiAdminRolesPermissionsByPermissionResponse;
+export type PermissionListResponse = GetApiRolesPermissionsResponse;
+export type PermissionDto = GetApiRolesPermissionsByPermissionResponse;
 
 /**
  * Permissions resource for querying available permissions.
@@ -31,7 +31,7 @@ export class PermissionsResource {
 	 */
 	list(): ResultAsync<PermissionListResponse, SdkError> {
 		return this.client.request<PermissionListResponse>((httpClient, headers) =>
-			sdk.getApiAdminRolesPermissions({
+			sdk.getApiRolesPermissions({
 				client: httpClient,
 				headers,
 			}),
@@ -43,7 +43,7 @@ export class PermissionsResource {
 	 */
 	get(permission: string): ResultAsync<PermissionDto, SdkError> {
 		return this.client.request<PermissionDto>((httpClient, headers) =>
-			sdk.getApiAdminRolesPermissionsByPermission({
+			sdk.getApiRolesPermissionsByPermission({
 				client: httpClient,
 				headers,
 				path: { permission },

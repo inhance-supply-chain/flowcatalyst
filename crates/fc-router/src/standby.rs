@@ -287,7 +287,14 @@ impl StandbyProcessor {
     }
 }
 
-/// Spawn a task that monitors leadership status and logs transitions
+/// Spawn a task that monitors leadership status and logs transitions.
+///
+/// **Owns:** the `Arc<StandbyProcessor>` and a `broadcast::Receiver`
+/// derived from the supplied shutdown sender.
+/// **Exits:** when `shutdown_rx.recv()` resolves (the shutdown channel
+/// is fired by the lifecycle manager on Ctrl-C / SIGTERM).
+/// **Joined by:** the caller via the returned `JoinHandle`. Lifecycle
+/// manager awaits all such handles during graceful shutdown.
 pub fn spawn_leadership_monitor(
     processor: Arc<StandbyProcessor>,
     shutdown_tx: broadcast::Sender<()>,

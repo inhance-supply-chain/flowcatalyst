@@ -1,9 +1,7 @@
 //! FlowCatalyst Platform API Client
 //!
-//! HTTP client for managing event types, subscriptions, connections,
-//! and performing sync operations against the FlowCatalyst platform API.
-//!
-//! # Example
+//! HTTP client for the FlowCatalyst platform API. Operations are grouped
+//! by resource and accessed via methods that return a borrowed accessor:
 //!
 //! ```ignore
 //! use fc_sdk::client::FlowCatalystClient;
@@ -12,14 +10,12 @@
 //!     .with_token("your-api-token");
 //!
 //! // Manage event types
-//! let event_type = client.create_event_type(&CreateEventTypeRequest {
-//!     code: "orders:fulfillment:shipment:shipped".to_string(),
-//!     name: "Shipment Shipped".to_string(),
-//!     ..Default::default()
-//! }).await?;
+//! let event_type = client.event_types().create(&req).await?;
 //!
-//! // Sync from application manifest
-//! let result = client.sync_event_types("orders", &sync_req, true).await?;
+//! // Sync from an application manifest (per-resource)
+//! let result = client.event_types().sync("orders", &sync_req, true).await?;
+//!
+//! // Or use the multi-resource orchestrator (sync module)
 //! ```
 
 pub mod applications;
@@ -29,15 +25,32 @@ pub mod connections;
 pub mod dispatch_pools;
 pub mod event_types;
 pub mod me;
+pub mod openapi;
+pub mod permissions;
 pub mod principals;
+pub mod processes;
 pub mod roles;
 pub mod router;
+pub mod scheduled_jobs;
 pub mod subscriptions;
-pub mod sync;
 
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 
+/// Result body returned by every per-resource sync endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncResult {
+    pub application_code: String,
+    pub created: u32,
+    pub updated: u32,
+    pub deleted: u32,
+    pub synced_codes: Vec<String>,
+}
+
+// Re-export request/response DTOs at the module root so callers can write
+// `use fc_sdk::client::{CreateApplicationRequest, ...}` without knowing
+// which file each type lives in.
 pub use applications::*;
 pub use audit_logs::*;
 pub use clients::*;
@@ -45,23 +58,30 @@ pub use connections::*;
 pub use dispatch_pools::*;
 pub use event_types::*;
 pub use me::*;
+pub use openapi::*;
+pub use permissions::*;
 pub use principals::*;
+pub use processes::*;
 pub use roles::*;
 pub use router::*;
+pub use scheduled_jobs::*;
 pub use subscriptions::*;
-pub use sync::*;
 
 /// HTTP client for the FlowCatalyst platform API.
+///
+/// Operations are exposed via resource-accessor methods — call
+/// `client.applications().list().await?` rather than a free
+/// `client.list_applications().await?`.
 #[derive(Clone)]
 pub struct FlowCatalystClient {
     base_url: String,
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     token: Option<String>,
     /// Optional override base URL for the message router's monitoring
     /// endpoints. The router is a separate process from the platform and
     /// usually runs at its own host. If `None`, router methods fall back
     /// to `base_url`.
-    router_base_url: Option<String>,
+    pub(crate) router_base_url: Option<String>,
 }
 
 impl FlowCatalystClient {
@@ -96,7 +116,86 @@ impl FlowCatalystClient {
         self
     }
 
-    fn headers(&self) -> HeaderMap {
+    // ── Resource accessors ──────────────────────────────────────────────
+
+    /// Applications — `/api/applications/*`.
+    pub fn applications(&self) -> applications::Applications<'_> {
+        applications::Applications { client: self }
+    }
+
+    /// Audit logs — `/api/audit-logs/*`.
+    pub fn audit_logs(&self) -> audit_logs::AuditLogs<'_> {
+        audit_logs::AuditLogs { client: self }
+    }
+
+    /// Clients (tenants) — `/api/clients/*`.
+    pub fn clients(&self) -> clients::Clients<'_> {
+        clients::Clients { client: self }
+    }
+
+    /// Connections — `/api/connections/*`.
+    pub fn connections(&self) -> connections::Connections<'_> {
+        connections::Connections { client: self }
+    }
+
+    /// Dispatch pools — `/api/dispatch-pools/*`.
+    pub fn dispatch_pools(&self) -> dispatch_pools::DispatchPools<'_> {
+        dispatch_pools::DispatchPools { client: self }
+    }
+
+    /// Event types — `/api/event-types/*`.
+    pub fn event_types(&self) -> event_types::EventTypes<'_> {
+        event_types::EventTypes { client: self }
+    }
+
+    /// Current user context — `/api/me/*`.
+    pub fn me(&self) -> me::Me<'_> {
+        me::Me { client: self }
+    }
+
+    /// Permissions catalogue — `/api/roles/permissions/*`.
+    pub fn permissions(&self) -> permissions::Permissions<'_> {
+        permissions::Permissions { client: self }
+    }
+
+    /// Principals (users + service accounts) — `/api/principals/*`.
+    pub fn principals(&self) -> principals::Principals<'_> {
+        principals::Principals { client: self }
+    }
+
+    /// Process documentation — `/api/processes/*`.
+    pub fn processes(&self) -> processes::Processes<'_> {
+        processes::Processes { client: self }
+    }
+
+    /// OpenAPI specs — `/api/applications/{appCode}/openapi/sync`.
+    pub fn openapi(&self) -> openapi::OpenApi<'_> {
+        openapi::OpenApi { client: self }
+    }
+
+    /// Roles — `/api/roles/*`.
+    pub fn roles(&self) -> roles::Roles<'_> {
+        roles::Roles { client: self }
+    }
+
+    /// Message-router monitoring — `/monitoring/in-flight-messages/*`.
+    pub fn router(&self) -> router::Router<'_> {
+        router::Router { client: self }
+    }
+
+    /// Scheduled jobs — `/api/scheduled-jobs/*`.
+    pub fn scheduled_jobs(&self) -> scheduled_jobs::ScheduledJobs<'_> {
+        scheduled_jobs::ScheduledJobs { client: self }
+    }
+
+    /// Subscriptions — `/api/subscriptions/*`.
+    pub fn subscriptions(&self) -> subscriptions::Subscriptions<'_> {
+        subscriptions::Subscriptions { client: self }
+    }
+
+    // ── Internal HTTP helpers ───────────────────────────────────────────
+
+    pub(crate) fn headers(&self) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         if let Some(ref token) = self.token {
@@ -107,14 +206,17 @@ impl FlowCatalystClient {
         headers
     }
 
-    fn url(&self, path: &str) -> String {
+    pub(crate) fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
 
-    async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ClientError> {
+    pub(crate) async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<T, ClientError> {
         let resp = self
             .http
-            .get(&self.url(path))
+            .get(self.url(path))
             .headers(self.headers())
             .send()
             .await
@@ -132,14 +234,14 @@ impl FlowCatalystClient {
         resp.json().await.map_err(ClientError::Request)
     }
 
-    async fn post<B: Serialize, T: serde::de::DeserializeOwned>(
+    pub(crate) async fn post<B: Serialize, T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
     ) -> Result<T, ClientError> {
         let resp = self
             .http
-            .post(&self.url(path))
+            .post(self.url(path))
             .headers(self.headers())
             .json(body)
             .send()
@@ -158,14 +260,14 @@ impl FlowCatalystClient {
         resp.json().await.map_err(ClientError::Request)
     }
 
-    async fn put<B: Serialize, T: serde::de::DeserializeOwned>(
+    pub(crate) async fn put<B: Serialize, T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         body: &B,
     ) -> Result<T, ClientError> {
         let resp = self
             .http
-            .put(&self.url(path))
+            .put(self.url(path))
             .headers(self.headers())
             .json(body)
             .send()
@@ -184,10 +286,10 @@ impl FlowCatalystClient {
         resp.json().await.map_err(ClientError::Request)
     }
 
-    async fn delete_req(&self, path: &str) -> Result<(), ClientError> {
+    pub(crate) async fn delete_req(&self, path: &str) -> Result<(), ClientError> {
         let resp = self
             .http
-            .delete(&self.url(path))
+            .delete(self.url(path))
             .headers(self.headers())
             .send()
             .await
@@ -206,13 +308,13 @@ impl FlowCatalystClient {
     }
 
     /// DELETE that returns a parsed response body (e.g. the updated resource).
-    async fn delete_with_response<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn delete_with_response<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
     ) -> Result<T, ClientError> {
         let resp = self
             .http
-            .delete(&self.url(path))
+            .delete(self.url(path))
             .headers(self.headers())
             .send()
             .await
@@ -230,13 +332,13 @@ impl FlowCatalystClient {
         resp.json().await.map_err(ClientError::Request)
     }
 
-    async fn post_action<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn post_action<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
     ) -> Result<T, ClientError> {
         let resp = self
             .http
-            .post(&self.url(path))
+            .post(self.url(path))
             .headers(self.headers())
             .send()
             .await
@@ -254,11 +356,39 @@ impl FlowCatalystClient {
         resp.json().await.map_err(ClientError::Request)
     }
 
-    async fn post_empty(&self, path: &str) -> Result<(), ClientError> {
+    pub(crate) async fn post_empty(&self, path: &str) -> Result<(), ClientError> {
         let resp = self
             .http
-            .post(&self.url(path))
+            .post(self.url(path))
             .headers(self.headers())
+            .send()
+            .await
+            .map_err(ClientError::Request)?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Api {
+                status: status.as_u16(),
+                body,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// PUT with a JSON body, discarding the response body. For platform
+    /// endpoints that return 204 No Content on success (e.g. update flows).
+    pub(crate) async fn put_empty<B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<(), ClientError> {
+        let resp = self
+            .http
+            .put(self.url(path))
+            .headers(self.headers())
+            .json(body)
             .send()
             .await
             .map_err(ClientError::Request)?;

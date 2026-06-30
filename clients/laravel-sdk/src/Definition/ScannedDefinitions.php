@@ -14,12 +14,16 @@ final class ScannedDefinitions
      * @param array<array<string, mixed>> $eventTypes
      * @param array<array<string, mixed>> $subscriptions
      * @param array<array<string, mixed>> $dispatchPools
+     * @param array<array<string, mixed>> $processes
+     * @param array<array<string, mixed>> $scheduledJobs
      */
     public function __construct(
         public readonly array $roles = [],
         public readonly array $eventTypes = [],
         public readonly array $subscriptions = [],
         public readonly array $dispatchPools = [],
+        public readonly array $processes = [],
+        public readonly array $scheduledJobs = [],
     ) {}
 
     /**
@@ -30,7 +34,9 @@ final class ScannedDefinitions
         return empty($this->roles)
             && empty($this->eventTypes)
             && empty($this->subscriptions)
-            && empty($this->dispatchPools);
+            && empty($this->dispatchPools)
+            && empty($this->processes)
+            && empty($this->scheduledJobs);
     }
 
     /**
@@ -41,7 +47,9 @@ final class ScannedDefinitions
         return count($this->roles)
             + count($this->eventTypes)
             + count($this->subscriptions)
-            + count($this->dispatchPools);
+            + count($this->dispatchPools)
+            + count($this->processes)
+            + count($this->scheduledJobs);
     }
 
     /**
@@ -56,6 +64,8 @@ final class ScannedDefinitions
             'eventTypes' => $this->eventTypes,
             'subscriptions' => $this->subscriptions,
             'dispatchPools' => $this->dispatchPools,
+            'processes' => $this->processes,
+            'scheduledJobs' => $this->scheduledJobs,
         ];
     }
 
@@ -71,6 +81,8 @@ final class ScannedDefinitions
             eventTypes: $data['eventTypes'] ?? [],
             subscriptions: $data['subscriptions'] ?? [],
             dispatchPools: $data['dispatchPools'] ?? [],
+            processes: $data['processes'] ?? [],
+            scheduledJobs: $data['scheduledJobs'] ?? [],
         );
     }
 }

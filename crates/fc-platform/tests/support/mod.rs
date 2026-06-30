@@ -124,6 +124,12 @@ impl TestApp {
             &auth_services,
             &unit_of_work,
             PlatformRoutesConfig {
+                rate_limit_store: Arc::new(
+                    fc_platform::shared::rate_limit_store::NoopRateLimitStore,
+                ),
+                rate_limit_policies: Arc::new(
+                    fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
+                ),
                 session_cookie_secure: false,
                 session_cookie_same_site: PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string(),
                 session_token_expiry_secs: PlatformRoutesConfig::DEFAULT_SESSION_EXPIRY_SECS,

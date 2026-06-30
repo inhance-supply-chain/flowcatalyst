@@ -12,6 +12,11 @@ export default defineConfig({
 	input: openApiInput,
 	output: {
 		path: "src/generated",
+		// Emit relative imports with `.js` extensions so the generated
+		// code is directly Node-ESM-resolvable. Without this, NodeNext
+		// module resolution rejects `from "./client"` at compile time
+		// and Node's ESM loader rejects it at runtime.
+		importFileExtension: ".js",
 	},
 	plugins: ["@hey-api/typescript", "@hey-api/sdk", "@hey-api/client-fetch"],
 	postProcess: ["prettier"],

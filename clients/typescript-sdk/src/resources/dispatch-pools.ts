@@ -9,8 +9,8 @@
  */
 
 import type { ResultAsync } from "neverthrow";
-import type { SdkError } from "../errors";
-import type { FlowCatalystClient } from "../client";
+import type { SdkError } from "../errors.js";
+import type { FlowCatalystClient } from "../client.js";
 
 export interface DispatchPoolDto {
 	id: string;
@@ -180,21 +180,23 @@ export class DispatchPoolsResource {
 
 	/**
 	 * Sync dispatch pools for an application.
+	 *
+	 * Calls `POST /api/applications/{applicationCode}/dispatch-pools/sync`.
 	 */
 	sync(
 		applicationCode: string,
-		pools: Array<{ code: string; name: string; description?: string | null; maxConcurrency: number; rateLimit?: number | null; rateLimitWindow?: number | null }>,
+		pools: Array<{ code: string; name: string; description?: string | null; concurrency: number; rateLimit?: number | null }>,
 		removeUnlisted = false,
 	): ResultAsync<SyncDispatchPoolsResponse, SdkError> {
 		return this.client.request<SyncDispatchPoolsResponse>(
 			(httpClient, headers) =>
 				httpClient.post({
-					url: "/api/dispatch-pools/sync",
+					url: `/api/applications/${encodeURIComponent(applicationCode)}/dispatch-pools/sync`,
 					headers: {
 						...headers,
 						"Content-Type": "application/json",
 					},
-					body: { applicationCode, pools },
+					body: { pools },
 					query: { removeUnlisted },
 				}),
 		);

@@ -383,6 +383,130 @@ release bump:
     echo "  Workflow:  https://github.com/flowcatalyst/flowcatalyst/actions/workflows/release-fc-dev.yml"
     echo "  Release:   https://github.com/flowcatalyst/flowcatalyst/releases/tag/fc-dev/v$new"
 
+# Cut a TypeScript SDK release. Bumps package.json, commits, tags
+# `typescript-sdk/vX.Y.Z`, and pushes. The split-typescript-sdk workflow
+# picks up the tag, mirrors clients/typescript-sdk/ to the standalone
+# repo, builds dist/, and re-tags as plain vX.Y.Z there.
+release-ts-sdk bump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just _release-sdk ts "{{ bump }}"
+
+# Cut a Laravel SDK release. composer.json has no version field
+# (Packagist reads tags), so this only tags HEAD as
+# `laravel-sdk/vX.Y.Z` and pushes. The split-laravel-sdk workflow
+# mirrors clients/laravel-sdk/ to the standalone repo.
+release-laravel-sdk bump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just _release-sdk laravel "{{ bump }}"
+
+# Shared SDK-release driver. `kind` is `ts` or `laravel`.
+[private]
+_release-sdk kind bump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    case "{{ kind }}" in
+        ts)      prefix="typescript-sdk"; manifest="clients/typescript-sdk/package.json" ;;
+        laravel) prefix="laravel-sdk";    manifest="" ;;
+        *) echo "✗ unknown SDK kind: {{ kind }}" >&2; exit 1 ;;
+    esac
+
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "✗ Working tree is dirty. Commit or stash first." >&2
+        git status --short
+        exit 1
+    fi
+
+    clean_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+    # Source of truth: the highest existing $prefix/vX.Y.Z tag in this
+    # repo. The split workflows push these tags to the standalone repos
+    # as plain vX.Y.Z, so the monorepo tag is the canonical bump base.
+    current=$(git tag --list "$prefix/v*" \
+        | sed "s|^$prefix/v||" \
+        | awk -F. '/^[0-9]+\.[0-9]+\.[0-9]+$/ { printf "%010d%010d%010d %s\n", $1, $2, $3, $0 }' \
+        | sort -r \
+        | awk 'NR==1 {print $2}')
+
+    if [ -z "$current" ]; then
+        # No prior release. Start from 0.0.0 so `patch` lands on 0.0.1.
+        current="0.0.0"
+        echo "  (no prior $prefix/v* tag found — bumping from 0.0.0)"
+    fi
+
+    case "{{ bump }}" in
+        patch) new=$(echo "$current" | awk -F. -v OFS=. '{$3++; print}') ;;
+        minor) new=$(echo "$current" | awk -F. -v OFS=. '{$2++; $3=0; print}') ;;
+        major) new=$(echo "$current" | awk -F. -v OFS=. '{$1++; $2=0; $3=0; print}') ;;
+        *)
+            if [[ "{{ bump }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+                new="{{ bump }}"
+            else
+                echo "✗ '{{ bump }}' is not patch|minor|major|X.Y.Z[-suffix]" >&2
+                exit 1
+            fi
+            ;;
+    esac
+
+    if git rev-parse -q --verify "refs/tags/$prefix/v$new" >/dev/null; then
+        echo "✗ Tag $prefix/v$new already exists." >&2
+        exit 1
+    fi
+
+    echo ""
+    echo "  $prefix: $current → $new"
+    echo ""
+
+    # Update the manifest (TS only — Laravel composer.json has no version field).
+    if [ -n "$manifest" ]; then
+        # Replace the first top-level "version": "..." line. The TS
+        # package.json sorts version near the top; this is unique enough
+        # that a constrained pattern is safe. POSIX [[:space:]] (not \s)
+        # so this works on macOS BSD awk as well as gawk.
+        awk -v new="$new" '
+            /^[[:space:]]*"version":[[:space:]]*"[^"]+",?[[:space:]]*$/ && !done {
+                sub(/"version":[[:space:]]*"[^"]+"/, "\"version\": \"" new "\"")
+                done=1
+            }
+            {print}
+        ' "$manifest" > "$manifest.tmp"
+        mv "$manifest.tmp" "$manifest"
+
+        if ! grep -q "\"version\": \"$new\"" "$manifest"; then
+            echo "✗ Failed to update version in $manifest. Reverting." >&2
+            git checkout -- "$manifest"
+            exit 1
+        fi
+
+        echo "Changes:"
+        git --no-pager diff --stat "$manifest"
+        echo ""
+    fi
+
+    read -r -p "Commit, tag $prefix/v$new, and push? [y/N] " confirm || confirm="n"
+    case "$confirm" in
+        y|Y|yes|YES) ;;
+        *)
+            echo "Aborted. Reverting."
+            [ -n "$manifest" ] && git checkout -- "$manifest"
+            exit 1
+            ;;
+    esac
+
+    if [ -n "$manifest" ]; then
+        git add "$manifest"
+        git commit -m "$prefix v$new"
+    fi
+    git tag "$prefix/v$new"
+    git push origin HEAD "$prefix/v$new"
+
+    echo ""
+    echo "✓ Released $prefix v$new"
+    echo ""
+    echo "  Workflow:  https://github.com/flowcatalyst/flowcatalyst/actions/workflows/split-$prefix.yml"
+
 # ─── Tools ─────────────────────────────────────────────────────────────────
 
 # Install development tools

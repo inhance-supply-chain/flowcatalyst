@@ -57,13 +57,22 @@
 //! // 3. Refresh when needed
 //! let new_tokens = oauth.refresh_token(&tokens.refresh_token.unwrap()).await?;
 //!
-//! // 4. Logout
-//! let logout_url = oauth.logout_url(Some("https://myapp.example.com"), None);
+//! // 4. Logout — id_token_hint is required when post_logout_redirect_uri
+//! // is supplied (FlowCatalyst uses it to verify the redirect against the
+//! // client's registered postLogoutRedirectUris).
+//! let logout_url = oauth.logout_url(
+//!     Some("https://myapp.example.com"),
+//!     Some(&tokens.id_token.unwrap()),
+//!     None,
+//! );
 //! ```
 
 pub mod claims;
 pub mod jwks;
 pub mod oauth;
+
+#[cfg(feature = "axum")]
+pub mod axum;
 
 pub use claims::{AccessTokenClaims, AuthContext};
 pub use jwks::{HmacTokenValidator, JwksCache, TokenValidator, TokenValidatorConfig};
@@ -90,6 +99,14 @@ pub enum AuthError {
     /// Token exchange or OAuth2 flow error.
     #[error("Token exchange error: {0}")]
     TokenExchange(String),
+
+    /// Configuration error (bad key length, missing required field, etc.).
+    #[error("Config error: {0}")]
+    Config(String),
+
+    /// Cryptographic operation failed (encrypt/decrypt/sign/verify).
+    #[error("Crypto error: {0}")]
+    Crypto(String),
 }
 
 #[cfg(test)]

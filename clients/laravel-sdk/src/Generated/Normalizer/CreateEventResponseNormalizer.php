@@ -27,18 +27,18 @@ class CreateEventResponseNormalizer implements DenormalizerInterface, Normalizer
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\CreateEventResponse();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\CreateEventResponse();
         if (\array_key_exists('isDuplicate', $data) && \is_int($data['isDuplicate'])) {
             $data['isDuplicate'] = (bool) $data['isDuplicate'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('dispatchJobCount', $data) && $data['dispatchJobCount'] !== null) {
             $object->setDispatchJobCount($data['dispatchJobCount']);

@@ -166,7 +166,13 @@ impl QueueHealthMonitor {
     }
 }
 
-/// Spawn queue health monitoring background task
+/// Spawn the queue-health monitoring background task.
+///
+/// **Owns:** the supplied `Arc<QueueHealthMonitor>` and `Arc<QueueManager>`,
+/// plus a `broadcast::Receiver` derived from the shutdown sender.
+/// **Exits:** when the shutdown broadcast fires.
+/// **Joined by:** the caller via the returned `JoinHandle` (lifecycle
+/// manager awaits it on graceful shutdown).
 pub fn spawn_queue_health_monitor(
     monitor: Arc<QueueHealthMonitor>,
     manager: Arc<QueueManager>,

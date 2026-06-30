@@ -2334,11 +2334,12 @@ dependencies = [
 
 [[package]]
 name = "fc-dev"
-version = "0.4.0"
+version = "0.4.16"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "dirs",
@@ -2355,6 +2356,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "mime_guess",
  "postgresql_embedded",
+ "rand 0.9.2",
  "reqwest",
  "rust-embed",
  "self_update",
@@ -2468,8 +2470,10 @@ dependencies = [
  "lettre",
  "metrics",
  "nonzero_ext",
+ "openssl",
  "parking_lot 0.12.5",
  "rand 0.9.2",
+ "redis",
  "regex",
  "reqwest",
  "rsa",
@@ -2551,6 +2555,7 @@ name = "fc-router"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-trait",
  "aws-config",
  "aws-sdk-elasticloadbalancingv2",
@@ -2589,6 +2594,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "urlencoding",
  "utoipa",
  "utoipa-axum",
@@ -2622,9 +2628,13 @@ dependencies = [
 name = "fc-sdk"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "async-trait",
+ "axum",
+ "axum-extra",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "fc-common",
  "getrandom 0.3.4",
@@ -2632,15 +2642,20 @@ dependencies = [
  "hmac",
  "jsonwebtoken",
  "rand 0.9.2",
+ "redis",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "sqlx",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-test",
+ "tower",
  "tracing",
+ "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -3474,22 +3489,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyper-tls"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
-dependencies = [
- "bytes",
- "http-body-util",
- "hyper 1.8.1",
- "hyper-util",
- "native-tls",
- "tokio",
- "tokio-native-tls",
- "tower-service",
-]
-
-[[package]]
 name = "hyper-util"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4231,23 +4230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "native-tls"
-version = "0.2.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "465500e14ea162429d264d44189adc38b199b62b1c21eea9f69e4b73cb03bbf2"
-dependencies = [
- "libc",
- "log",
- "openssl",
- "openssl-probe 0.2.1",
- "openssl-sys",
- "schannel",
- "security-framework 3.7.0",
- "security-framework-sys",
- "tempfile",
-]
-
-[[package]]
 name = "nkeys"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4521,6 +4503,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "openssl-src"
+version = "300.6.0+3.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8e8cbfd3a4a8c8f089147fd7aaa33cf8c7450c4d09f8f80698a0cf093abeff4"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.112"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4528,6 +4519,7 @@ checksum = "57d55af3b3e226502be1526dfdba67ab0e9c96fc293004e79576b2b9edb0dbdb"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
@@ -4952,6 +4944,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9cc8653c31df5ffcd3bc114641dfae5390404d6e22bc21fd7473760f22cdc20b"
 dependencies = [
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 
@@ -5430,23 +5423,21 @@ dependencies = [
  "http-body-util",
  "hyper 1.8.1",
  "hyper-rustls 0.27.7",
- "hyper-tls",
  "hyper-util",
  "js-sys",
  "log",
  "mime",
- "native-tls",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
  "rustls 0.23.37",
+ "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
  "tokio",
- "tokio-native-tls",
  "tokio-rustls 0.26.4",
  "tokio-util",
  "tower",
@@ -6419,7 +6410,6 @@ dependencies = [
  "indexmap 2.13.0",
  "log",
  "memchr",
- "native-tls",
  "once_cell",
  "percent-encoding",
  "rustls 0.23.37",
@@ -6952,16 +6942,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "tokio-native-tls"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
-dependencies = [
- "native-tls",
- "tokio",
 ]
 
 [[package]]

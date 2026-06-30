@@ -53,7 +53,6 @@ use tracing::{error, info, warn};
 
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
-use fc_platform::seed::DevDataSeeder;
 use fc_platform::usecase::PgUnitOfWork;
 
 use fc_common::config::{
@@ -201,16 +200,24 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
 
+    fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
+
+    // Create the initial platform admin if no anchor user exists yet. No-op
+    // on subsequent boots; gated on FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL +
+    // _PASSWORD env vars when first run.
+    fc_platform::shared::bootstrap_admin::bootstrap_admin_user(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Bootstrap admin seeding failed: {}", e))?;
+
     // Referential-integrity scan — warns about orphaned junction rows.
     fc_platform::shared::integrity_scan::run(&pg_pool).await;
 
-    // Dev mode seeding
-    if env_bool("FC_DEV_MODE", false) {
-        let seeder = DevDataSeeder::new(pg_pool.clone());
-        if let Err(e) = seeder.seed().await {
-            warn!("Dev data seeding skipped: {}", e);
-        }
-    }
+    // Bootstrap of users / clients / applications / service accounts is
+    // owned by `fc-dev init`. fc-server is the production binary path —
+    // it relies on bootstrap_admin (env-driven) above for the first
+    // admin and operators take it from there via the platform UI / API.
 
     // ── DB credential refresh (AWS Secrets Manager rotation) ─────────────────
     // When credentials come from a secret provider, poll it on an interval and
@@ -344,6 +351,35 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("platform application row missing after seeding"))?
         .id;
 
+    // Distributed rate-limit store (Redis when FC_REDIS_URL is reachable,
+    // Postgres fallback). Constructed once here so the choice is logged at
+    // startup, then handed to the platform router builder.
+    let rate_limit_store =
+        fc_platform::shared::rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
+    let rate_limit_policies = Arc::new(
+        fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
+    );
+
+    // Hourly prune of the Postgres rate-limit table (no-op for Redis — TTLs
+    // age keys out automatically). Keeps row count bounded at peak-QPS ×
+    // max-policy-window.
+    {
+        let store = rate_limit_store.clone();
+        let max_window = rate_limit_policies.max_window();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            tick.tick().await; // skip the immediate-fire tick
+            loop {
+                tick.tick().await;
+                match store.prune(max_window).await {
+                    Ok(n) if n > 0 => tracing::debug!(rows = n, "rate_limit_events prune"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "rate_limit_events prune failed"),
+                }
+            }
+        });
+    }
+
     // ── Build HTTP app ───────────────────────────────────────────────────────
     let app = if platform_enabled {
         build_platform_app(
@@ -354,6 +390,8 @@ async fn main() -> Result<()> {
             &cors_origins_cache,
             standby_enabled,
             platform_application_id,
+            rate_limit_store.clone(),
+            rate_limit_policies.clone(),
         )
     } else {
         // Minimal app with just health + metrics
@@ -541,6 +579,7 @@ async fn main() -> Result<()> {
 
 // ── Platform App Builder ─────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn build_platform_app(
     api_port: u16,
     auth_services: &fc_platform::shared::server_setup::AuthServices,
@@ -549,6 +588,8 @@ fn build_platform_app(
     cors_origins_cache: &Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     _standby_enabled: bool,
     platform_application_id: String,
+    rate_limit_store: Arc<dyn fc_platform::shared::rate_limit_store::RateLimitStore>,
+    rate_limit_policies: Arc<fc_platform::shared::rate_limit_store::RateLimitPolicies>,
 ) -> Router {
     let app_state = AppState {
         auth_service: auth_services.auth.clone(),
@@ -561,6 +602,8 @@ fn build_platform_app(
         auth_services,
         unit_of_work,
         fc_platform::shared::server_setup::PlatformRoutesConfig {
+            rate_limit_store,
+            rate_limit_policies,
             session_cookie_secure: true,
             session_cookie_same_site: std::env::var("FC_SESSION_COOKIE_SAME_SITE")
                 .unwrap_or_else(|_| fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string()),
@@ -678,10 +721,12 @@ async fn spawn_router(mut active_rx: watch::Receiver<bool>) -> Option<tokio::tas
     // Pass mediator *config* (not a singleton instance) — QueueManager builds
     // a fresh HttpMediator per pool so each pool has its own HTTP connection
     // pool, sidestepping AWS's 128-stream cap per H/2 connection.
-    let mut queue_manager_inner = QueueManager::new(HttpMediatorConfig::production());
-    queue_manager_inner.set_warning_service(warning_service.clone());
-    queue_manager_inner.set_health_service(health_service.clone());
-    let queue_manager = Arc::new(queue_manager_inner);
+    let queue_manager = Arc::new(
+        QueueManager::builder(HttpMediatorConfig::production())
+            .warning_service(warning_service.clone())
+            .health_service(health_service.clone())
+            .build(),
+    );
 
     // Load configuration
     let router_config = if dev_mode {

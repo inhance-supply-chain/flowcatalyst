@@ -67,7 +67,7 @@ export const connectionsApi = {
 		});
 	},
 
-	update(id: string, data: UpdateConnectionRequest): Promise<Connection> {
+	update(id: string, data: UpdateConnectionRequest): Promise<void> {
 		return apiFetch(`/connections/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),

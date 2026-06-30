@@ -27,18 +27,18 @@ class RoleResponseNormalizer implements DenormalizerInterface, NormalizerInterfa
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\RoleResponse();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\RoleResponse();
         if (\array_key_exists('clientManaged', $data) && \is_int($data['clientManaged'])) {
             $data['clientManaged'] = (bool) $data['clientManaged'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
             $object->setApplicationCode($data['applicationCode']);

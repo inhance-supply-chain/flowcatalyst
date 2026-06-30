@@ -26,7 +26,8 @@ use crate::api::{
     DispatchPoolsState, DispatchProcessState, EmailDomainMappingsState, EventTypesState,
     EventsState, FilterOptionsState, IdentityProvidersState, InFlightTracker, LeaderState,
     LoginAttemptsState, MeState, MonitoringState, OAuthClientsState, OAuthState, OidcLoginApiState,
-    PasswordResetApiState, PlatformConfigState, PrincipalsState, PublicApiState, RolesState,
+    PasswordResetApiState, PlatformConfigState, PrincipalsState, ProcessesState, PublicApiState,
+    RolesState,
     SdkAuditBatchState, SdkDispatchJobsState, SdkEventsState, SdkSyncState, ServiceAccountsState,
     SubscriptionsState, WellKnownState,
 };
@@ -47,6 +48,12 @@ use super::AuthServices;
 
 /// Per-binary configuration for the points where binaries diverge.
 pub struct PlatformRoutesConfig {
+    /// Distributed rate-limit store. Built by the binary (async) so the
+    /// Redis-or-Postgres choice happens once at startup and is logged.
+    /// Use `NoopRateLimitStore` in tests.
+    pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
+    /// Per-bucket policies, loaded from env via `RateLimitPolicies::from_env`.
+    pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
     /// `Secure` flag for the OIDC session cookie. `true` in production.
     pub session_cookie_secure: bool,
     /// `SameSite` policy for the session cookie (`Lax`, `Strict`, or `None`).
@@ -125,11 +132,42 @@ pub fn build_platform_routes(
     ));
     let event_types_state = EventTypesState {
         event_type_repo: repos.event_type_repo.clone(),
-        sync_use_case: sync_event_types_use_case.clone(),
         create_use_case: create_event_type_use_case,
         update_use_case: update_event_type_use_case,
         delete_use_case: delete_event_type_use_case,
         add_schema_use_case,
+    };
+
+    // ── Process documentation (use cases + API state) ────────────────────
+    let sync_processes_use_case = Arc::new(
+        crate::process::operations::SyncProcessesUseCase::new(
+            repos.process_repo.clone(),
+            unit_of_work.clone(),
+        ),
+    );
+    let processes_state = {
+        use crate::process::operations::{
+            ArchiveProcessUseCase, CreateProcessUseCase, DeleteProcessUseCase, UpdateProcessUseCase,
+        };
+        ProcessesState {
+            process_repo: repos.process_repo.clone(),
+            create_use_case: Arc::new(CreateProcessUseCase::new(
+                repos.process_repo.clone(),
+                unit_of_work.clone(),
+            )),
+            update_use_case: Arc::new(UpdateProcessUseCase::new(
+                repos.process_repo.clone(),
+                unit_of_work.clone(),
+            )),
+            archive_use_case: Arc::new(ArchiveProcessUseCase::new(
+                repos.process_repo.clone(),
+                unit_of_work.clone(),
+            )),
+            delete_use_case: Arc::new(DeleteProcessUseCase::new(
+                repos.process_repo.clone(),
+                unit_of_work.clone(),
+            )),
+        }
     };
 
     // ── Scheduled jobs (use cases + API state) ────────────────────────────
@@ -389,7 +427,6 @@ pub fn build_platform_routes(
     );
     let subscriptions_state = SubscriptionsState {
         subscription_repo: repos.subscription_repo.clone(),
-        sync_use_case: sync_subscriptions_use_case.clone(),
         create_use_case: create_sub_use_case,
         update_use_case: update_sub_use_case,
         delete_use_case: delete_sub_use_case,
@@ -502,6 +539,7 @@ pub fn build_platform_routes(
         auth.oidc_sync.clone(),
         auth.auth.clone(),
         unit_of_work.clone(),
+        repos.oauth_client_repo.clone(),
     )
     .with_session_cookie_settings(
         "fc_session",
@@ -547,6 +585,8 @@ pub fn build_platform_routes(
         auth.password.clone(),
         repos.login_attempt_repo.clone(),
         client_token_rate_limit,
+        config.rate_limit_store.clone(),
+        config.rate_limit_policies.clone(),
     );
 
     let audit_logs_state = AuditLogsState {
@@ -762,6 +802,7 @@ pub fn build_platform_routes(
         client_repo: repos.client_repo.clone(),
         application_repo: repos.application_repo.clone(),
         app_client_config_repo: repos.application_client_config_repo.clone(),
+        principal_repo: repos.principal_repo.clone(),
     };
     let well_known_state = WellKnownState {
         auth_service: auth.auth.clone(),
@@ -778,11 +819,6 @@ pub fn build_platform_routes(
         repos.role_repo.clone(),
         unit_of_work.clone(),
     ));
-    let sync_roles_use_case = Arc::new(crate::role::operations::SyncRolesUseCase::new(
-        repos.role_repo.clone(),
-        repos.application_repo.clone(),
-        unit_of_work.clone(),
-    ));
     let delete_role_use_case = Arc::new(crate::role::operations::DeleteRoleUseCase::new(
         repos.role_repo.clone(),
         unit_of_work.clone(),
@@ -791,7 +827,6 @@ pub fn build_platform_routes(
         application_repo: repos.application_repo.clone(),
         role_repo: repos.role_repo.clone(),
         create_use_case: create_role_use_case,
-        sync_use_case: sync_roles_use_case,
         delete_use_case: delete_role_use_case,
     };
 
@@ -817,6 +852,8 @@ pub fn build_platform_routes(
         enable_for_client_use_case,
         disable_for_client_use_case,
         update_client_config_use_case,
+        oauth_client_repo: repos.oauth_client_repo.clone(),
+        create_oauth_client_use_case: oauth_clients_state.create_oauth_client_use_case.clone(),
         pg_unit_of_work: unit_of_work.clone(),
     };
     let service_accounts_state = ServiceAccountsState {
@@ -842,7 +879,6 @@ pub fn build_platform_routes(
         update_use_case: update_pool_use_case,
         archive_use_case: archive_pool_use_case,
         delete_use_case: delete_pool_use_case,
-        sync_use_case: sync_dispatch_pools_use_case.clone(),
     };
 
     let sync_roles_use_case = Arc::new(crate::role::operations::SyncRolesUseCase::new(
@@ -877,6 +913,7 @@ pub fn build_platform_routes(
         sync_subscriptions_use_case: sync_subscriptions_use_case.clone(),
         sync_dispatch_pools_use_case: sync_dispatch_pools_use_case.clone(),
         sync_principals_use_case,
+        sync_processes_use_case: sync_processes_use_case.clone(),
         sync_scheduled_jobs_use_case,
         sync_openapi_use_case: sync_openapi_use_case.clone(),
         application_repo: repos.application_repo.clone(),
@@ -961,6 +998,7 @@ pub fn build_platform_routes(
     PlatformRoutes {
         events: events_state,
         event_types: event_types_state,
+        processes: processes_state,
         scheduled_jobs: scheduled_jobs_state,
         dispatch_jobs: dispatch_jobs_state,
         filter_options: filter_options_state,
@@ -1017,5 +1055,7 @@ pub fn build_platform_routes(
             platform_application_id,
         },
         static_dir: config.static_dir,
+        rate_limit_store: config.rate_limit_store,
+        rate_limit_policies: config.rate_limit_policies,
     }
 }

@@ -10,9 +10,9 @@
  */
 
 import { ResultAsync, errAsync, okAsync } from "neverthrow";
-import type { SdkError } from "../errors";
-import { httpError, mapHttpStatusToError } from "../errors";
-import type { FlowCatalystClient } from "../client";
+import type { SdkError } from "../errors.js";
+import { httpError, mapHttpStatusToError } from "../errors.js";
+import type { FlowCatalystClient } from "../client.js";
 
 // ── Domain types (kept intentionally close to the platform DTOs) ────────────
 

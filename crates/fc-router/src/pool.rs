@@ -5,6 +5,7 @@
 //! and exits when the group's queue is empty. This matches the TS MessageGroupHandler
 //! pattern and uses ~200 bytes per idle group vs ~100KB with the old design.
 
+use arc_swap::ArcSwapOption;
 use dashmap::{DashMap, DashSet};
 use governor::{
     clock::DefaultClock,
@@ -31,12 +32,36 @@ const DEFAULT_GROUP: &str = "__DEFAULT__";
 const QUEUE_CAPACITY_MULTIPLIER: u32 = 20; // Java: QUEUE_CAPACITY_MULTIPLIER = 20
 const MIN_QUEUE_CAPACITY: u32 = 50; // Java: MIN_QUEUE_CAPACITY = 50
 
-/// Pool-wide rate limiter shared across all message groups in a pool.
-/// Wrapped in `RwLock<Option<...>>` so the limiter can be hot-swapped at
-/// runtime when a pool's configured rate changes — readers (workers) keep
-/// using their snapshot, the next acquire picks up the new limit.
-type SharedRateLimiter =
-    Arc<parking_lot::RwLock<Option<Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>>;
+/// Pool-wide rate limiter state shared across all message groups in a pool.
+///
+/// Bundles the configured `rpm` with the live `RateLimiter` so a single
+/// `ArcSwapOption` swap atomically updates both — replacing the older
+/// `Arc<RwLock<Option<Arc<RateLimiter>>>>` + `Arc<RwLock<Option<u32>>>`
+/// pair. Readers (workers) take a lock-free snapshot via `.load()`; the
+/// next acquire after an `update_rate_limit` picks up the new state.
+type SharedRateLimiter = Arc<ArcSwapOption<RateLimitState>>;
+
+#[derive(Debug)]
+struct RateLimitState {
+    rpm: u32,
+    limiter: RateLimiter<NotKeyed, InMemoryState, DefaultClock>,
+}
+
+impl RateLimitState {
+    /// Build a `RateLimitState` from a per-minute quota. `Some(0)` and
+    /// values that don't fit a `NonZeroU32` collapse to `None`.
+    fn from_rpm(rpm: u32) -> Option<Arc<Self>> {
+        if rpm == 0 {
+            return None;
+        }
+        NonZeroU32::new(rpm).map(|nz| {
+            Arc::new(Self {
+                rpm,
+                limiter: RateLimiter::direct(Quota::per_minute(nz)),
+            })
+        })
+    }
+}
 
 /// Composite key for batch+group tracking - avoids format!() string allocation
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -128,20 +153,19 @@ pub struct ProcessPool {
     /// Per-message-group handlers (lightweight: VecDeque + processing flag)
     group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
 
-    /// Track in-flight message groups
-    in_flight_groups: DashSet<Arc<str>>,
-
     /// Batch+group failure tracking for cascading NACKs
     failed_batch_groups: Arc<DashSet<BatchGroupKey>>,
 
     /// Track remaining messages per batch+group for cleanup
     batch_group_message_count: Arc<DashMap<BatchGroupKey, AtomicU32>>,
 
-    /// Rate limiter (optional, behind Arc<RwLock> for sharing with workers and in-place updates)
+    /// Rate limiter + configured rpm bundled together. `ArcSwapOption`
+    /// allows lock-free reads on the hot path (every dispatched message)
+    /// and atomic hot-swap on `update_rate_limit`. The bundled `rpm`
+    /// replaces the older separate `Arc<RwLock<Option<u32>>>` field —
+    /// one primitive now holds both the live limiter and the value used
+    /// to detect "did the config change?" during reconfig.
     rate_limiter: SharedRateLimiter,
-
-    /// Current rate limit value for comparison during updates
-    rate_limit_per_minute: Arc<parking_lot::RwLock<Option<u32>>>,
 
     /// Running state
     running: AtomicBool,
@@ -157,13 +181,32 @@ pub struct ProcessPool {
 
     /// Per-endpoint circuit breaker registry — shared across pools, keyed by mediation target URL.
     circuit_breaker_registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
-
-    /// Warning service for generating warnings
-    warning_service: Arc<crate::warning::WarningService>,
 }
 
 impl ProcessPool {
+    /// Construct a pool with a private circuit breaker registry.
+    /// **Test/standalone use only** — production pools are created by the
+    /// `QueueManager` via [`ProcessPool::with_dependencies`] so they share the
+    /// manager's single registry. Keeping this thin constructor lets unit tests
+    /// build a pool without plumbing collaborators they don't exercise.
     pub fn new(config: PoolConfig, mediator: Arc<dyn Mediator>) -> Self {
+        Self::with_dependencies(
+            config,
+            mediator,
+            Arc::new(crate::circuit_breaker_registry::CircuitBreakerRegistry::default()),
+        )
+    }
+
+    /// Construct a fully-wired pool. The `QueueManager` passes its shared
+    /// circuit breaker registry here, so breaker state is shared across all
+    /// pools (and visible to monitoring). Requiring the registry up front makes
+    /// the previously-possible "pool created without the shared registry" bug
+    /// unrepresentable on the production path.
+    pub fn with_dependencies(
+        config: PoolConfig,
+        mediator: Arc<dyn Mediator>,
+        circuit_breaker_registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
+    ) -> Self {
         // Java: effectiveConcurrency() — if concurrency is 0, fall back to max(rateLimitPerMinute/60, 1)
         let concurrency_val = if config.concurrency == 0 {
             config
@@ -174,9 +217,7 @@ impl ProcessPool {
             config.concurrency
         };
 
-        let rate_limiter = config.rate_limit_per_minute.and_then(|rpm| {
-            NonZeroU32::new(rpm).map(|nz| Arc::new(RateLimiter::direct(Quota::per_minute(nz))))
-        });
+        let initial_rate_limit = config.rate_limit_per_minute.and_then(RateLimitState::from_rpm);
 
         Self {
             config: config.clone(),
@@ -184,42 +225,15 @@ impl ProcessPool {
             concurrency: AtomicU32::new(concurrency_val),
             semaphore: Arc::new(Semaphore::new(concurrency_val as usize)),
             group_handlers: Arc::new(DashMap::new()),
-            in_flight_groups: DashSet::new(),
             failed_batch_groups: Arc::new(DashSet::new()),
             batch_group_message_count: Arc::new(DashMap::new()),
-            rate_limiter: Arc::new(parking_lot::RwLock::new(rate_limiter)),
-            rate_limit_per_minute: Arc::new(parking_lot::RwLock::new(config.rate_limit_per_minute)),
+            rate_limiter: Arc::new(ArcSwapOption::new(initial_rate_limit)),
             running: AtomicBool::new(false),
             queue_size: Arc::new(AtomicU32::new(0)),
             active_workers: Arc::new(AtomicU32::new(0)),
             metrics_collector: Arc::new(PoolMetricsCollector::new()),
-            circuit_breaker_registry: Arc::new(
-                crate::circuit_breaker_registry::CircuitBreakerRegistry::default(),
-            ),
-            warning_service: Arc::new(crate::warning::WarningService::noop()),
+            circuit_breaker_registry,
         }
-    }
-
-    /// Set the shared circuit breaker registry
-    pub fn set_circuit_breaker_registry(
-        &mut self,
-        registry: Arc<crate::circuit_breaker_registry::CircuitBreakerRegistry>,
-    ) {
-        self.circuit_breaker_registry = registry;
-    }
-
-    /// Set the warning service for generating warnings
-    pub fn with_warning_service(
-        mut self,
-        warning_service: Arc<crate::warning::WarningService>,
-    ) -> Self {
-        self.warning_service = warning_service;
-        self
-    }
-
-    /// Set warning service after construction
-    pub fn set_warning_service(&mut self, warning_service: Arc<crate::warning::WarningService>) {
-        self.warning_service = warning_service;
     }
 
     /// Start the pool
@@ -354,6 +368,15 @@ impl ProcessPool {
 
     /// Spawn a standalone task for an IMMEDIATE mode message.
     /// No group ordering — acquires semaphore, rate-limits, mediates, callbacks directly.
+    ///
+    /// **Owns:** Arc clones of the pool's semaphore / mediator / counters /
+    /// rate limiter / metrics / circuit-breaker registry, plus the single
+    /// `PoolTask` value that was handed in.
+    /// **Exits:** when mediation finishes (success, failure, or callback
+    /// fired). Self-terminating — there is no shutdown channel; the task
+    /// is short-lived (one message).
+    /// **Joined by:** nobody. The pool tracks in-flight work via the
+    /// `active_workers` counter and the semaphore permit lifetime.
     fn spawn_immediate_task(&self, task: PoolTask) {
         let semaphore = self.semaphore.clone();
         let mediator = self.mediator.clone();
@@ -453,13 +476,24 @@ impl ProcessPool {
     }
 
     /// Spawn a task that drains all queued messages for a group, then exits.
+    ///
+    /// **Owns:** the group's `MessageGroupHandler` (via `group_handlers`)
+    /// and Arc clones of the pool's shared state (semaphore, mediator,
+    /// counters, rate limiter, metrics, circuit-breaker registry,
+    /// failed-batch tracking).
+    /// **Exits:** when the group's queue drains to empty (the handler's
+    /// `processing` flag is cleared and the loop breaks). Self-terminating
+    /// — one drain task per active group, recreated by the next submit
+    /// that finds the queue idle.
+    /// **Joined by:** nobody. The `processing` flag in the handler is the
+    /// "is a drain task running" signal; the Drop guard at the top of the
+    /// spawned body resets that flag even on panic.
     fn spawn_drain_task(&self, group_id: Arc<str>) {
         let pool_code: Arc<str> = Arc::from(self.config.code.as_str());
         let semaphore = self.semaphore.clone();
         let mediator = self.mediator.clone();
         let queue_size = self.queue_size.clone();
         let active_workers = self.active_workers.clone();
-        let in_flight_groups = self.in_flight_groups.clone();
         let failed_batch_groups = self.failed_batch_groups.clone();
         let batch_group_message_count = self.batch_group_message_count.clone();
         let rate_limiter = self.rate_limiter.clone();
@@ -486,7 +520,6 @@ impl ProcessPool {
             struct PanicGuard {
                 group_handlers: Arc<DashMap<Arc<str>, parking_lot::Mutex<MessageGroupHandler>>>,
                 group_id: Arc<str>,
-                in_flight_groups: DashSet<Arc<str>>,
                 active_workers: Arc<AtomicU32>,
                 /// Whether a semaphore permit was held when panic occurred
                 holding_permit: bool,
@@ -521,7 +554,6 @@ impl ProcessPool {
                         error!(group_id = %self.group_id, "Drain task exited abnormally — reset processing flag");
                     }
                     if self.holding_permit {
-                        self.in_flight_groups.remove(&self.group_id);
                         self.active_workers.fetch_sub(1, Ordering::Relaxed);
                     }
                 }
@@ -529,7 +561,6 @@ impl ProcessPool {
             let mut panic_guard = PanicGuard {
                 group_handlers: group_handlers.clone(),
                 group_id: group_id.clone(),
-                in_flight_groups: in_flight_groups.clone(),
                 active_workers: active_workers.clone(),
                 holding_permit: false,
                 active: true,
@@ -622,7 +653,6 @@ impl ProcessPool {
                 };
 
                 active_workers.fetch_add(1, Ordering::Relaxed);
-                in_flight_groups.insert(group_id.clone());
                 panic_guard.holding_permit = true;
 
                 // Check per-endpoint circuit breaker before attempting mediation
@@ -746,7 +776,6 @@ impl ProcessPool {
                 }
 
                 // Cleanup
-                in_flight_groups.remove(&group_id);
                 active_workers.fetch_sub(1, Ordering::Relaxed);
                 panic_guard.holding_permit = false;
                 drop(permit);
@@ -799,9 +828,9 @@ impl ProcessPool {
     /// Check if rate limited
     pub fn is_rate_limited(&self) -> bool {
         self.rate_limiter
-            .read()
+            .load()
             .as_ref()
-            .map(|rl| rl.check().is_err())
+            .map(|s| s.limiter.check().is_err())
             .unwrap_or(false)
     }
 
@@ -821,22 +850,25 @@ impl ProcessPool {
         rate_limiter: &SharedRateLimiter,
         metrics_collector: &Arc<PoolMetricsCollector>,
     ) {
-        let limiter = rate_limiter.read().clone();
-
-        let rl = match limiter {
+        // Lock-free snapshot. `load_full` clones the inner Arc; the
+        // returned handle is independent of any subsequent `store` so a
+        // hot-swap during `.until_ready().await` does not affect this
+        // call (the next acquire picks up the new limiter).
+        let snapshot = rate_limiter.load_full();
+        let state = match snapshot {
             None => return,
-            Some(rl) => rl,
+            Some(s) => s,
         };
 
         // Fast path: permit available immediately.
-        if rl.check().is_ok() {
+        if state.limiter.check().is_ok() {
             return;
         }
 
         // Slow path: wait for permit (no timeout).
         metrics_collector.record_rate_limited();
         debug!("Rate limited — waiting for permit");
-        rl.until_ready().await;
+        state.limiter.until_ready().await;
     }
 
     /// Drain the pool (stop accepting new work)
@@ -870,7 +902,7 @@ impl ProcessPool {
                 MIN_QUEUE_CAPACITY,
             ),
             message_group_count: self.group_handlers.len() as u32,
-            rate_limit_per_minute: *self.rate_limit_per_minute.read(),
+            rate_limit_per_minute: self.rate_limit_per_minute(),
             is_rate_limited: self.is_rate_limited(),
             metrics: Some(self.metrics_collector.get_metrics()),
         }
@@ -905,7 +937,7 @@ impl ProcessPool {
 
     /// Get current rate limit setting
     pub fn rate_limit_per_minute(&self) -> Option<u32> {
-        *self.rate_limit_per_minute.read()
+        self.rate_limiter.load().as_ref().map(|s| s.rpm)
     }
 
     /// Get current queue size
@@ -984,24 +1016,20 @@ impl ProcessPool {
         permits
     }
 
-    /// Update rate limit at runtime
+    /// Update rate limit at runtime.
+    ///
+    /// Atomic swap via `ArcSwapOption::store` — in-flight workers
+    /// holding a snapshot from before the swap finish on the old
+    /// limiter; the next acquire picks up the new state.
     pub fn update_rate_limit(&self, new_rate_limit: Option<u32>) {
-        let old_rate_limit = *self.rate_limit_per_minute.read();
+        let old_rate_limit = self.rate_limit_per_minute();
 
         if old_rate_limit == new_rate_limit {
             return;
         }
 
-        let new_limiter = new_rate_limit.and_then(|rpm| {
-            if rpm == 0 {
-                None
-            } else {
-                NonZeroU32::new(rpm).map(|nz| Arc::new(RateLimiter::direct(Quota::per_minute(nz))))
-            }
-        });
-
-        *self.rate_limiter.write() = new_limiter;
-        *self.rate_limit_per_minute.write() = new_rate_limit;
+        let new_state = new_rate_limit.and_then(RateLimitState::from_rpm);
+        self.rate_limiter.store(new_state);
 
         info!(
             pool_code = %self.config.code,

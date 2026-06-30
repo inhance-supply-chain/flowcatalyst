@@ -1,9 +1,18 @@
 //! Use Case Result Type
 //!
-//! Result type for use case execution. In the FlowCatalyst pattern, success
-//! is typically created through `UnitOfWork::commit()` to ensure domain events
-//! are always emitted. The SDK makes `success()` public so consumers can
-//! implement custom `UnitOfWork` backends.
+//! Sealed result type for use case execution. `success()` is `pub(crate)`,
+//! so the only code that can construct a successful result is the SDK's own
+//! `UnitOfWork` implementations (`OutboxUnitOfWork`,
+//! `TxScopedOutboxUnitOfWork`, `InMemoryUnitOfWork`). Consumer use cases
+//! defined outside the SDK MUST route success through one of these via
+//! `unit_of_work.commit()` / `commit_delete()` / `emit_event()` /
+//! `commit_all()`. This mirrors the platform's `pub(in crate::usecase)` seal
+//! and the TS SDK's `Sealed<E>` pattern — compile-time enforced, zero cost.
+//!
+//! Trade-off: consumer apps that need a custom `UnitOfWork` backend (e.g.
+//! MySQL / SQLite via sqlx, or a Diesel-based outbox) cannot construct
+//! success directly. Open an issue if you hit this; the bundled backends
+//! cover the common cases (Postgres outbox + in-memory for tests).
 
 use super::error::UseCaseError;
 
@@ -33,9 +42,12 @@ impl<T> UseCaseResult<T> {
 
     /// Create a success result.
     ///
-    /// In the standard pattern, success is created by `UnitOfWork::commit()`.
-    /// This is public in the SDK to allow custom `UnitOfWork` implementations.
-    pub fn success(value: T) -> Self {
+    /// Sealed to `pub(crate)` — only the SDK's own `UnitOfWork` impls can
+    /// construct a success. Consumer use cases must route through
+    /// `unit_of_work.commit()` / `commit_delete()` / `emit_event()` /
+    /// `commit_all()` (or `.map()` chained onto one of those). See the
+    /// module-level documentation for the rationale.
+    pub(crate) fn success(value: T) -> Self {
         UseCaseResult::Success(value)
     }
 

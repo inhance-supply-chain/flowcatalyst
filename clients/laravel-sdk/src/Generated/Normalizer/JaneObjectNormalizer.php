@@ -114,6 +114,8 @@ class JaneObjectNormalizer implements DenormalizerInterface, NormalizerInterface
         
         \FlowCatalyst\Generated\Model\CreateOAuthClientResponse::class => \FlowCatalyst\Generated\Normalizer\CreateOAuthClientResponseNormalizer::class,
         
+        \FlowCatalyst\Generated\Model\CreateProcessRequest::class => \FlowCatalyst\Generated\Normalizer\CreateProcessRequestNormalizer::class,
+        
         \FlowCatalyst\Generated\Model\CreateRoleRequest::class => \FlowCatalyst\Generated\Normalizer\CreateRoleRequestNormalizer::class,
         
         \FlowCatalyst\Generated\Model\CreateScheduledJobRequest::class => \FlowCatalyst\Generated\Normalizer\CreateScheduledJobRequestNormalizer::class,
@@ -222,6 +224,10 @@ class JaneObjectNormalizer implements DenormalizerInterface, NormalizerInterface
         
         \FlowCatalyst\Generated\Model\PrincipalResponse::class => \FlowCatalyst\Generated\Normalizer\PrincipalResponseNormalizer::class,
         
+        \FlowCatalyst\Generated\Model\ProcessListResponse::class => \FlowCatalyst\Generated\Normalizer\ProcessListResponseNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\ProcessResponse::class => \FlowCatalyst\Generated\Normalizer\ProcessResponseNormalizer::class,
+        
         \FlowCatalyst\Generated\Model\ProcessingTimeMetrics::class => \FlowCatalyst\Generated\Normalizer\ProcessingTimeMetricsNormalizer::class,
         
         \FlowCatalyst\Generated\Model\RefreshTokenRequest::class => \FlowCatalyst\Generated\Normalizer\RefreshTokenRequestNormalizer::class,
@@ -272,11 +278,37 @@ class JaneObjectNormalizer implements DenormalizerInterface, NormalizerInterface
         
         \FlowCatalyst\Generated\Model\SuccessResponse::class => \FlowCatalyst\Generated\Normalizer\SuccessResponseNormalizer::class,
         
+        \FlowCatalyst\Generated\Model\SyncDispatchPoolInputRequest::class => \FlowCatalyst\Generated\Normalizer\SyncDispatchPoolInputRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncDispatchPoolsRequest::class => \FlowCatalyst\Generated\Normalizer\SyncDispatchPoolsRequestNormalizer::class,
+        
         \FlowCatalyst\Generated\Model\SyncEventTypeInputRequest::class => \FlowCatalyst\Generated\Normalizer\SyncEventTypeInputRequestNormalizer::class,
         
         \FlowCatalyst\Generated\Model\SyncEventTypesRequest::class => \FlowCatalyst\Generated\Normalizer\SyncEventTypesRequestNormalizer::class,
         
+        \FlowCatalyst\Generated\Model\SyncOpenApiSpecRequest::class => \FlowCatalyst\Generated\Normalizer\SyncOpenApiSpecRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncOpenApiSpecResponse::class => \FlowCatalyst\Generated\Normalizer\SyncOpenApiSpecResponseNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncPrincipalInputRequest::class => \FlowCatalyst\Generated\Normalizer\SyncPrincipalInputRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncPrincipalsRequest::class => \FlowCatalyst\Generated\Normalizer\SyncPrincipalsRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncProcessInputRequest::class => \FlowCatalyst\Generated\Normalizer\SyncProcessInputRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncProcessesRequest::class => \FlowCatalyst\Generated\Normalizer\SyncProcessesRequestNormalizer::class,
+        
         \FlowCatalyst\Generated\Model\SyncResultResponse::class => \FlowCatalyst\Generated\Normalizer\SyncResultResponseNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncRoleInputRequest::class => \FlowCatalyst\Generated\Normalizer\SyncRoleInputRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncRolesRequest::class => \FlowCatalyst\Generated\Normalizer\SyncRolesRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncScheduledJobInputRequest::class => \FlowCatalyst\Generated\Normalizer\SyncScheduledJobInputRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncScheduledJobsRequest::class => \FlowCatalyst\Generated\Normalizer\SyncScheduledJobsRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\SyncScheduledJobsResultResponse::class => \FlowCatalyst\Generated\Normalizer\SyncScheduledJobsResultResponseNormalizer::class,
         
         \FlowCatalyst\Generated\Model\SyncSubscriptionEventTypeRequest::class => \FlowCatalyst\Generated\Normalizer\SyncSubscriptionEventTypeRequestNormalizer::class,
         
@@ -297,6 +329,8 @@ class JaneObjectNormalizer implements DenormalizerInterface, NormalizerInterface
         \FlowCatalyst\Generated\Model\UpdateOAuthClientRequest::class => \FlowCatalyst\Generated\Normalizer\UpdateOAuthClientRequestNormalizer::class,
         
         \FlowCatalyst\Generated\Model\UpdatePrincipalRequest::class => \FlowCatalyst\Generated\Normalizer\UpdatePrincipalRequestNormalizer::class,
+        
+        \FlowCatalyst\Generated\Model\UpdateProcessRequest::class => \FlowCatalyst\Generated\Normalizer\UpdateProcessRequestNormalizer::class,
         
         \FlowCatalyst\Generated\Model\UpdateRoleRequest::class => \FlowCatalyst\Generated\Normalizer\UpdateRoleRequestNormalizer::class,
         
@@ -392,6 +426,7 @@ class JaneObjectNormalizer implements DenormalizerInterface, NormalizerInterface
             \FlowCatalyst\Generated\Model\CreateEventTypeRequest::class => false,
             \FlowCatalyst\Generated\Model\CreateOAuthClientRequest::class => false,
             \FlowCatalyst\Generated\Model\CreateOAuthClientResponse::class => false,
+            \FlowCatalyst\Generated\Model\CreateProcessRequest::class => false,
             \FlowCatalyst\Generated\Model\CreateRoleRequest::class => false,
             \FlowCatalyst\Generated\Model\CreateScheduledJobRequest::class => false,
             \FlowCatalyst\Generated\Model\CreateSubscriptionRequest::class => false,
@@ -446,6 +481,8 @@ class JaneObjectNormalizer implements DenormalizerInterface, NormalizerInterface
             \FlowCatalyst\Generated\Model\PoolStatsResponse::class => false,
             \FlowCatalyst\Generated\Model\PrincipalListResponse::class => false,
             \FlowCatalyst\Generated\Model\PrincipalResponse::class => false,
+            \FlowCatalyst\Generated\Model\ProcessListResponse::class => false,
+            \FlowCatalyst\Generated\Model\ProcessResponse::class => false,
             \FlowCatalyst\Generated\Model\ProcessingTimeMetrics::class => false,
             \FlowCatalyst\Generated\Model\RefreshTokenRequest::class => false,
             \FlowCatalyst\Generated\Model\RegenerateSecretResponse::class => false,
@@ -471,9 +508,22 @@ class JaneObjectNormalizer implements DenormalizerInterface, NormalizerInterface
             \FlowCatalyst\Generated\Model\SubscriptionListResponse::class => false,
             \FlowCatalyst\Generated\Model\SubscriptionResponse::class => false,
             \FlowCatalyst\Generated\Model\SuccessResponse::class => false,
+            \FlowCatalyst\Generated\Model\SyncDispatchPoolInputRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncDispatchPoolsRequest::class => false,
             \FlowCatalyst\Generated\Model\SyncEventTypeInputRequest::class => false,
             \FlowCatalyst\Generated\Model\SyncEventTypesRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncOpenApiSpecRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncOpenApiSpecResponse::class => false,
+            \FlowCatalyst\Generated\Model\SyncPrincipalInputRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncPrincipalsRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncProcessInputRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncProcessesRequest::class => false,
             \FlowCatalyst\Generated\Model\SyncResultResponse::class => false,
+            \FlowCatalyst\Generated\Model\SyncRoleInputRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncRolesRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncScheduledJobInputRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncScheduledJobsRequest::class => false,
+            \FlowCatalyst\Generated\Model\SyncScheduledJobsResultResponse::class => false,
             \FlowCatalyst\Generated\Model\SyncSubscriptionEventTypeRequest::class => false,
             \FlowCatalyst\Generated\Model\SyncSubscriptionInputRequest::class => false,
             \FlowCatalyst\Generated\Model\SyncSubscriptionsRequest::class => false,
@@ -484,6 +534,7 @@ class JaneObjectNormalizer implements DenormalizerInterface, NormalizerInterface
             \FlowCatalyst\Generated\Model\UpdateEventTypeRequest::class => false,
             \FlowCatalyst\Generated\Model\UpdateOAuthClientRequest::class => false,
             \FlowCatalyst\Generated\Model\UpdatePrincipalRequest::class => false,
+            \FlowCatalyst\Generated\Model\UpdateProcessRequest::class => false,
             \FlowCatalyst\Generated\Model\UpdateRoleRequest::class => false,
             \FlowCatalyst\Generated\Model\UpdateScheduledJobRequest::class => false,
             \FlowCatalyst\Generated\Model\UpdateSubscriptionRequest::class => false,

@@ -40,6 +40,7 @@ use crate::api::{
     email_domain_mappings_router,
     event_types_router,
     events_api_router,
+    processes_router,
     // OpenApiRouter routes
     events_router,
     filter_options_router,
@@ -96,6 +97,7 @@ use crate::api::{
     PasswordResetApiState,
     PlatformConfigState,
     PrincipalsState,
+    ProcessesState,
     PublicApiState,
     RolesState,
     ScheduledJobsState,
@@ -110,6 +112,9 @@ use crate::api::{
 use crate::shared::bff_developer_api::{bff_developer_router, BffDeveloperState};
 use crate::shared::rate_limit_middleware::{
     rate_limit_per_ip, IpRateLimiterState, RateLimitConfig,
+};
+use crate::shared::rate_limit_store::{
+    distributed_rate_limit_per_ip, Bucket, DistributedIpLimitState,
 };
 use crate::usecase::UnitOfWork;
 use std::sync::Arc;
@@ -148,6 +153,8 @@ pub const PATH_BFF_DEBUG_DISPATCH_JOBS: &str = "/bff/debug/dispatch-jobs";
 // API routes (single programmable surface; gated by permissions, not URL tier)
 pub const PATH_API_EVENTS: &str = "/api/events";
 pub const PATH_API_EVENT_TYPES: &str = "/api/event-types";
+pub const PATH_API_PROCESSES: &str = "/api/processes";
+pub const PATH_BFF_PROCESSES: &str = "/bff/processes";
 pub const PATH_API_CLIENTS: &str = "/api/clients";
 pub const PATH_API_PRINCIPALS: &str = "/api/principals";
 pub const PATH_API_ROLES: &str = "/api/roles";
@@ -206,6 +213,12 @@ pub const PATH_HEALTH: &str = "/health";
 // Swagger
 pub const PATH_SWAGGER_UI: &str = "/swagger-ui";
 pub const PATH_OPENAPI_SPEC: &str = "/q/openapi";
+/// Unfiltered OpenAPI spec including `/bff/*` paths that share handlers
+/// with their `/api/*` siblings. The `/bff/*` tier is frontend-only and
+/// not part of the SDK contract; this endpoint is for internal tooling
+/// (full-surface exploration, developer portal previews) where the BFF
+/// shapes are useful even though they aren't programmable.
+pub const PATH_OPENAPI_SPEC_FULL: &str = "/q/openapi-full";
 
 // =============================================================================
 // PlatformRoutes
@@ -218,6 +231,7 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     // -- OpenApiRouter routes (collected in Swagger) --
     pub events: EventsState,
     pub event_types: EventTypesState,
+    pub processes: ProcessesState,
     pub dispatch_jobs: DispatchJobsState,
     pub scheduled_jobs: ScheduledJobsState,
     pub filter_options: FilterOptionsState,
@@ -274,6 +288,12 @@ pub struct PlatformRoutes<U: UnitOfWork + Clone + 'static> {
     /// - SPA fallback (index.html) for unmatched GET requests
     /// - Explicit SPA routes for paths that conflict with API nests (e.g., /auth/login)
     pub static_dir: Option<String>,
+
+    /// Distributed rate-limit store (Redis when reachable, Postgres
+    /// fallback). Used to enforce cluster-wide per-IP + per-`client_id`
+    /// limits on the OAuth/auth edge — see `RateLimitPolicies`.
+    pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
+    pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
 }
 
 impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
@@ -293,6 +313,29 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         let auth_layer = axum::middleware::from_fn_with_state(auth_ip_limit, rate_limit_per_ip);
         let oauth_layer = axum::middleware::from_fn_with_state(oauth_ip_limit, rate_limit_per_ip);
 
+        // Distributed (cluster-wide) per-IP limiters layered on top of the
+        // in-memory governor above. The two compose: governor rejects bursts
+        // at this instance (sub-ms, no I/O), the distributed store catches a
+        // single source spreading load across replicas. One layer per
+        // (bucket, policy) so each route group's limits can be tuned
+        // independently via env.
+        let distributed_oauth_token_layer = axum::middleware::from_fn_with_state(
+            DistributedIpLimitState {
+                store: self.rate_limit_store.clone(),
+                bucket: Bucket::OAUTH_TOKEN_IP,
+                policy: self.rate_limit_policies.oauth_token_ip,
+            },
+            distributed_rate_limit_per_ip,
+        );
+        let distributed_password_reset_layer = axum::middleware::from_fn_with_state(
+            DistributedIpLimitState {
+                store: self.rate_limit_store.clone(),
+                bucket: Bucket::PASSWORD_RESET_IP,
+                policy: self.rate_limit_policies.password_reset_ip,
+            },
+            distributed_rate_limit_per_ip,
+        );
+
         // 1. OpenApiRouter routes (auto-collected in Swagger spec)
         let (router, mut openapi) = OpenApiRouter::new()
             // Same cursor-paginated read handlers serve both /api/events
@@ -307,6 +350,11 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             .nest(PATH_API_EVENTS, events_api_router(self.events.clone()))
             .nest(PATH_BFF_EVENTS, events_router(self.events))
             .nest(PATH_API_EVENT_TYPES, event_types_router(self.event_types))
+            .nest(
+                PATH_API_PROCESSES,
+                processes_router(self.processes.clone()),
+            )
+            .nest(PATH_BFF_PROCESSES, processes_router(self.processes))
             .nest(
                 PATH_API_SCHEDULED_JOBS,
                 scheduled_jobs_router(self.scheduled_jobs),
@@ -340,12 +388,23 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             .nest(PATH_API_AUDIT_LOGS, audit_logs_router(self.audit_logs))
             .nest(PATH_MONITORING, monitoring_router(self.monitoring))
+            // SDK-facing app-scoped sync routes — exposed in the OpenAPI spec
+            // so the SDK code generators produce typed bindings for them.
+            .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
             .nest(PATH_AUTH, auth_router(self.auth).layer(auth_layer.clone()))
             .nest(
                 PATH_AUTH,
                 crate::webauthn::webauthn_router(self.webauthn).layer(auth_layer.clone()),
             )
             .split_for_parts();
+
+        // Capture the full spec (including `/bff/*` paths) before we
+        // strip BFF entries from the public surface. Served at
+        // `PATH_OPENAPI_SPEC_FULL` for internal tooling — pre-serialised
+        // once at boot since the spec is fixed for the process lifetime.
+        let openapi_full_bytes: axum::body::Bytes = serde_json::to_vec(&openapi)
+            .map(axum::body::Bytes::from)
+            .unwrap_or_default();
 
         // Strip `/bff/*` paths from the spec. The BFF tier is internal to the
         // frontend and intentionally not part of the programmable surface; it
@@ -514,7 +573,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             .nest(
                 PATH_OAUTH,
-                oauth_router(self.oauth).layer(oauth_layer.clone()),
+                oauth_router(self.oauth)
+                    .layer(distributed_oauth_token_layer)
+                    .layer(oauth_layer.clone()),
             )
             .nest(PATH_WELL_KNOWN, well_known_router(self.well_known))
             .nest(
@@ -523,7 +584,9 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
             )
             .nest(
                 PATH_AUTH_PASSWORD_RESET,
-                password_reset_router(self.password_reset).layer(auth_layer.clone()),
+                password_reset_router(self.password_reset)
+                    .layer(distributed_password_reset_layer)
+                    .layer(auth_layer.clone()),
             )
             // Batch ingest endpoints (merged into resource routers)
             .nest(PATH_API_EVENTS, sdk_events_batch_router(self.sdk_events))
@@ -536,7 +599,8 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
                 PATH_API_APPLICATIONS,
                 application_roles_sdk_router(self.application_roles_sdk),
             )
-            .nest(PATH_API_APPLICATIONS, sdk_sync_router(self.sdk_sync))
+            // sdk_sync_router moved up into the OpenAPI chain so its routes
+            // appear in /q/openapi and SDK generators pick them up.
             .nest(
                 PATH_API_AUDIT_LOGS,
                 sdk_audit_batch_router(self.sdk_audit_batch),
@@ -555,8 +619,29 @@ impl<U: UnitOfWork + Clone + 'static> PlatformRoutes<U> {
         let app = app
             // Health
             .route(PATH_HEALTH, get(health_handler))
-            // Swagger UI
-            .merge(SwaggerUi::new(PATH_SWAGGER_UI).url(PATH_OPENAPI_SPEC, openapi.clone()));
+            // Swagger UI (serves `/swagger-ui` + `/q/openapi`, BFF-stripped)
+            .merge(SwaggerUi::new(PATH_SWAGGER_UI).url(PATH_OPENAPI_SPEC, openapi.clone()))
+            // Full OpenAPI spec including `/bff/*`. JSON only — not mounted
+            // into Swagger UI to keep the default UI aligned with the SDK
+            // contract. Body is pre-serialised at boot.
+            .route(
+                PATH_OPENAPI_SPEC_FULL,
+                get({
+                    let body = openapi_full_bytes;
+                    move || {
+                        let body = body.clone();
+                        async move {
+                            (
+                                [(
+                                    axum::http::header::CONTENT_TYPE,
+                                    "application/json",
+                                )],
+                                body,
+                            )
+                        }
+                    }
+                }),
+            );
 
         // SPA serving (if static_dir is configured)
         let app = if let Some(ref static_dir) = self.static_dir {

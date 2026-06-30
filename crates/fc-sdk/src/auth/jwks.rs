@@ -628,6 +628,7 @@ mod tests {
             name: "Test".to_string(),
             clients: vec!["*".to_string()],
             roles: vec!["admin".to_string()],
+            applications: vec![],
         };
 
         let header = Header::new(Algorithm::HS256);
@@ -699,6 +700,7 @@ mod tests {
             name: "t".to_string(),
             clients: vec![],
             roles: vec![],
+            applications: vec![],
         };
         let token = encode(
             &Header::new(Algorithm::HS256),

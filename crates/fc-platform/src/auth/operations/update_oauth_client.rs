@@ -22,6 +22,8 @@ pub struct UpdateOAuthClientCommand {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect_uris: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_logout_redirect_uris: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub grant_types: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pkce_required: Option<bool>,
@@ -100,6 +102,9 @@ impl<U: UnitOfWork> UseCase for UpdateOAuthClientUseCase<U> {
         }
         if let Some(ref uris) = command.redirect_uris {
             client.redirect_uris = uris.clone();
+        }
+        if let Some(ref uris) = command.post_logout_redirect_uris {
+            client.post_logout_redirect_uris = uris.clone();
         }
         if let Some(ref grants) = command.grant_types {
             client.grant_types = grants

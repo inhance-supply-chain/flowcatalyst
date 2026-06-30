@@ -39,7 +39,7 @@ use fc_queue::postgres::PostgresQueue;
 use fc_queue::EmbeddedQueue;
 use fc_router::{
     api::create_router as create_api_router,
-    CircuitBreakerRegistry as RouterCircuitBreakerRegistry, HealthService, HealthServiceConfig,
+    HealthService, HealthServiceConfig,
     HttpMediatorConfig, LifecycleConfig, LifecycleManager, QueueManager, WarningService,
     WarningServiceConfig,
 };
@@ -72,12 +72,30 @@ enum Command {
     /// subcommand — kept for discoverability.
     Start(RunArgs),
 
+    /// Bootstrap a fresh application on this local fc-dev:
+    /// admin user (if none exists), Default Client, Application,
+    /// Service Account, OAuth client, and a `.env` written to the
+    /// project root. Replaces the per-SDK init commands.
+    Init(init::InitArgs),
+
+    /// Truncate every FlowCatalyst table in the database (preserves the
+    /// schema + the migration tracker). Used to start over without
+    /// reinstalling or re-migrating. Refuses to run without explicit
+    /// confirmation.
+    Fresh(fresh::FreshArgs),
+
     /// Run the FlowCatalyst MCP server (read-only access to event types
     /// and subscriptions for AI agents).
     ///
     /// Reads `FLOWCATALYST_URL`, `FLOWCATALYST_CLIENT_ID`, and
     /// `FLOWCATALYST_CLIENT_SECRET` from the environment.
     Mcp(McpArgs),
+
+    /// Standalone outbox poller. Polls an external app's
+    /// `outbox_messages` Postgres table and forwards to a FlowCatalyst
+    /// platform API. Use when the app's database can't be the embedded
+    /// one (e.g. PostGIS in Docker).
+    Outbox(outbox::OutboxArgs),
 
     /// Download the latest fc-dev release and replace this binary.
     Upgrade(UpgradeArgs),
@@ -280,12 +298,21 @@ mod embedded_pg {
 }
 
 mod banner;
+mod fresh;
+mod init;
 mod mcp_bootstrap;
+mod outbox;
 mod upgrade;
 mod version_check;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env BEFORE Cli::parse() so clap's `#[arg(env = "…")]` fallbacks
+    // pick up values from the project's `.env.development` / `.env`. Without
+    // this, env vars only resolve from the actual shell environment, and the
+    // common case of "I set FC_OUTBOX_TOKEN in .env" silently doesn't work.
+    let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
+
     // Subcommand fast path — handle the ones that don't need a database,
     // env vars, or anything else expensive before booting the dev server.
     let cli = Cli::parse();
@@ -312,11 +339,20 @@ async fn main() -> Result<()> {
                 fc_mcp::run_stdio(config).await
             };
         }
+        Some(Command::Init(args)) => {
+            fc_common::logging::init_logging("fc-dev init");
+            return init::run(args).await;
+        }
+        Some(Command::Fresh(args)) => {
+            fc_common::logging::init_logging("fc-dev fresh");
+            return fresh::run(args).await;
+        }
+        Some(Command::Outbox(args)) => {
+            fc_common::logging::init_logging("fc-dev outbox");
+            return outbox::run(args).await;
+        }
         _ => {}
     }
-
-    // Load .env.development (or .env) if present
-    let _ = dotenvy::from_filename(".env.development").or_else(|_| dotenvy::dotenv());
 
     // Set dev defaults for env vars that aren't set
     // These make fc-dev zero-config (only DB URL needed).
@@ -328,6 +364,24 @@ async fn main() -> Result<()> {
     }
     if std::env::var("FC_DEV_MODE").is_err() {
         std::env::set_var("FC_DEV_MODE", "true");
+    }
+
+    // WebAuthn / passkeys default to localhost in fc-dev so the browser
+    // accepts the credentials without TLS. Override either by exporting
+    // the env var or by putting it in `.env.development`.
+    //   RP_ID must be the bare hostname (no scheme, no port).
+    //   ORIGINS is a comma-separated allow-list of full origins — Vite
+    //   on :5173 and the fc-dev API on :8080 cover both the SPA dev
+    //   server and the production-served frontend on the same port as
+    //   the API.
+    if std::env::var("FC_WEBAUTHN_RP_ID").is_err() {
+        std::env::set_var("FC_WEBAUTHN_RP_ID", "localhost");
+    }
+    if std::env::var("FC_WEBAUTHN_ORIGINS").is_err() {
+        std::env::set_var(
+            "FC_WEBAUTHN_ORIGINS",
+            "http://localhost:5173,http://localhost:8080",
+        );
     }
 
     // Anchor the JWT keypair to an absolute dev-cache path so sessions
@@ -406,6 +460,10 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
 
+    fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
+
     // Referential-integrity scan — warns when any aggregate delete path has
     // left orphan junction rows behind. Non-fatal; operator-visible.
     fc_platform::shared::integrity_scan::run(&pg_pool).await;
@@ -431,9 +489,11 @@ async fn main() -> Result<()> {
 
     // 4. Create QueueManager. Mediator *config* is passed (not a singleton);
     //    each pool gets its own HttpMediator + connection pool.
-    let mut queue_manager_inner = QueueManager::new(HttpMediatorConfig::dev());
-    queue_manager_inner.set_warning_service(warning_service.clone());
-    let queue_manager = Arc::new(queue_manager_inner);
+    let queue_manager = Arc::new(
+        QueueManager::builder(HttpMediatorConfig::dev())
+            .warning_service(warning_service.clone())
+            .build(),
+    );
     queue_manager.add_consumer(queue.clone()).await;
 
     // 5. Apply router configuration
@@ -453,11 +513,19 @@ async fn main() -> Result<()> {
     queue_manager.apply_config(router_config).await?;
 
     // 6. Start lifecycle manager (visibility extension, health checks)
-    let lifecycle = LifecycleManager::start(
+    let lifecycle_config = LifecycleConfig::default();
+    let cb_max_idle = lifecycle_config.circuit_breaker_max_idle;
+    let mut lifecycle = LifecycleManager::start(
         queue_manager.clone(),
         warning_service.clone(),
         health_service.clone(),
-        LifecycleConfig::default(),
+        lifecycle_config,
+    );
+    // Wire periodic idle-eviction against the manager's shared breaker registry
+    // (see fc-router main.rs) — otherwise shared breakers grow unbounded.
+    lifecycle.set_circuit_breaker_registry(
+        queue_manager.circuit_breaker_registry().clone(),
+        cb_max_idle,
     );
 
     // 7. Outbox processor — deferred until after AuthService is ready (needs a service token).
@@ -485,11 +553,10 @@ async fn main() -> Result<()> {
     // 8. Setup platform services and APIs
     info!("Initializing platform services...");
 
-    // Seed development data (the pool + migrations were set up in step 1).
-    let seeder = fc_platform::seed::DevDataSeeder::new(pg_pool.clone());
-    if let Err(e) = seeder.seed().await {
-        tracing::warn!("Dev data seeding skipped (data may already exist): {}", e);
-    }
+    // No auto-seeded dev data — use `fc-dev init` to bootstrap an
+    // admin + application + service account interactively. Built-in
+    // roles + platform application + default processes are seeded
+    // unconditionally in step 1 above.
 
     // 8c. Initialize all repositories
     let repos = Repositories::new(&pg_pool);
@@ -671,11 +738,19 @@ async fn main() -> Result<()> {
     // 8e. Build platform API router via shared builder (handles ~38 state structs).
     // Event fan-out runs as a background service (started below); the request
     // path doesn't need the queue/dispatch deps wired in here.
+    let rate_limit_store =
+        fc_platform::shared::rate_limit_store::build_rate_limit_store(repos.pool.clone()).await;
+    let rate_limit_policies = std::sync::Arc::new(
+        fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
+    );
+
     let routes = fc_platform::shared::server_setup::build_platform_routes(
         &repos,
         &auth_services,
         &unit_of_work,
         fc_platform::shared::server_setup::PlatformRoutesConfig {
+            rate_limit_store: rate_limit_store.clone(),
+            rate_limit_policies: rate_limit_policies.clone(),
             session_cookie_secure: false,
             session_cookie_same_site:
                 fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE
@@ -690,12 +765,49 @@ async fn main() -> Result<()> {
             well_known_external_base_url: format!("http://localhost:{}", args.api_port),
             password_reset_external_base_url: format!("http://localhost:{}", args.api_port),
         },
-        platform_application_id,
+        platform_application_id.clone(),
     );
+
+    // Background prune for the Postgres rate-limit table (no-op for Redis).
+    // Runs hourly; keeps `iam_rate_limit_events` from growing past peak QPS
+    // × max policy window.
+    {
+        let store = rate_limit_store.clone();
+        let max_window = rate_limit_policies.max_window();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            tick.tick().await; // skip the immediate-fire tick
+            loop {
+                tick.tick().await;
+                match store.prune(max_window).await {
+                    Ok(n) if n > 0 => tracing::debug!(rows = n, "rate_limit_events prune"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "rate_limit_events prune failed"),
+                }
+            }
+        });
+    }
 
     // Event fan-out runs inside the stream processor (fc-stream) configured
     // above; nothing to start here.
-    let (platform_app, _openapi) = routes.build();
+    let (platform_app, platform_openapi) = routes.build();
+
+    // Dev-only auto-sync of the Developer portal artefacts. Idempotent —
+    // event-types sync writes only deltas, and OpenAPI sync no-ops when
+    // the spec hash matches CURRENT. Best-effort: failures warn but don't
+    // block fc-dev from serving.
+    if let Err(e) = auto_sync_developer_portal(
+        &pg_pool,
+        unit_of_work.clone(),
+        repos.event_type_repo.clone(),
+        repos.principal_repo.clone(),
+        platform_application_id.clone(),
+        serde_json::to_value(&platform_openapi).unwrap_or(serde_json::Value::Null),
+    )
+    .await
+    {
+        warn!(error = %e, "Developer-portal auto-sync skipped");
+    }
 
     // Dev-specific extra route states (the shared builder doesn't wire
     // /api/dispatch-jobs or /api/event-types/filters — fc-dev does
@@ -730,7 +842,9 @@ async fn main() -> Result<()> {
     info!("Platform APIs configured");
 
     // 9. Start API server (merge router API with platform APIs)
-    let router_circuit_breaker = Arc::new(RouterCircuitBreakerRegistry::default());
+    // Shared registry: the monitoring API must read the same breakers the
+    // pools record into (was a disconnected RouterCircuitBreakerRegistry::default()).
+    let router_circuit_breaker = queue_manager.circuit_breaker_registry().clone();
     let router_api = create_api_router(
         queue.clone(),
         queue_manager.clone(),
@@ -966,3 +1080,106 @@ async fn embedded_spa_handler() -> impl axum::response::IntoResponse {
 }
 
 use axum::response::IntoResponse;
+
+/// Dev-only auto-sync of the Developer portal artefacts for the
+/// `platform` application. Mirrors the two BFF handlers
+/// (`POST /bff/event-types/sync-platform` and
+/// `POST /bff/developer/sync-platform-openapi`) but skips HTTP — we
+/// already have the use cases + the captured OpenAPI in scope at this
+/// point in startup.
+///
+/// Idempotent in both directions: event-types sync only writes deltas,
+/// and OpenAPI sync no-ops when the hash matches the CURRENT row. Safe
+/// to run on every `fc-dev` start.
+///
+/// Best-effort. Logs and returns Ok on per-step failure rather than
+/// aborting startup — these are dev affordances, not load-bearing.
+async fn auto_sync_developer_portal(
+    pg_pool: &sqlx::PgPool,
+    unit_of_work: Arc<PgUnitOfWork>,
+    event_type_repo: Arc<fc_platform::EventTypeRepository>,
+    principal_repo: Arc<fc_platform::PrincipalRepository>,
+    platform_application_id: String,
+    platform_openapi: serde_json::Value,
+) -> anyhow::Result<()> {
+    use fc_platform::application_openapi_spec::operations::{
+        SyncOpenApiSpecCommand, SyncOpenApiSpecUseCase,
+    };
+    use fc_platform::application_openapi_spec::repository::OpenApiSpecRepository;
+    use fc_platform::event_type::operations::{SyncEventTypesCommand, SyncEventTypesUseCase};
+    use fc_platform::usecase::{ExecutionContext, UseCase, UseCaseResult};
+
+    // Attribute the sync to the seeded bootstrap admin so it has a real
+    // principal_id (and so audit logs / `synced_by` show a human, not a
+    // synthetic system actor). `synced_by` is VARCHAR(17) — a TSID id
+    // fits, an arbitrary string usually doesn't.
+    let admin_email = std::env::var("FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL")
+        .unwrap_or_else(|_| "admin@flowcatalyst.local".to_string());
+    let principal_id = match principal_repo.find_by_email(&admin_email).await {
+        Ok(Some(p)) => p.id,
+        Ok(None) => {
+            info!(
+                "Developer-portal auto-sync skipped: no admin principal yet \
+                 (run `fc-dev fresh` or set FLOWCATALYST_BOOTSTRAP_ADMIN_* env vars)."
+            );
+            return Ok(());
+        }
+        Err(e) => {
+            warn!(error = %e, "Developer-portal auto-sync: principal lookup failed");
+            return Ok(());
+        }
+    };
+    let ctx = ExecutionContext::create(principal_id);
+
+    // ── Event types + schemas for the `platform` application ──────────
+    let definitions = fc_platform::seed::platform_event_types::definitions();
+    let event_types_total = definitions.len();
+    let cmd = SyncEventTypesCommand {
+        application_code: "platform".to_string(),
+        event_types: definitions,
+        remove_unlisted: false,
+    };
+    let sync_event_types = SyncEventTypesUseCase::new(event_type_repo, unit_of_work.clone());
+    match sync_event_types.run(cmd, ctx.clone()).await {
+        UseCaseResult::Success(event) => {
+            info!(
+                total = event_types_total,
+                created = event.created,
+                updated = event.updated,
+                deleted = event.deleted,
+                "Developer-portal auto-sync: platform event types"
+            );
+        }
+        UseCaseResult::Failure(err) => {
+            warn!(error = ?err, "Developer-portal auto-sync: platform event types failed");
+        }
+    }
+
+    // ── Platform's own OpenAPI document into the developer portal ─────
+    if !platform_openapi.is_object() {
+        warn!("Developer-portal auto-sync: OpenAPI spec is not a JSON object, skipping");
+        return Ok(());
+    }
+    let openapi_repo = Arc::new(OpenApiSpecRepository::new(pg_pool));
+    let sync_openapi = SyncOpenApiSpecUseCase::new(openapi_repo, unit_of_work);
+    let cmd = SyncOpenApiSpecCommand {
+        application_id: platform_application_id,
+        application_code: "platform".to_string(),
+        spec: platform_openapi,
+    };
+    match sync_openapi.run(cmd, ctx).await {
+        UseCaseResult::Success(event) => {
+            info!(
+                version = %event.version,
+                unchanged = event.unchanged,
+                has_breaking = event.has_breaking,
+                "Developer-portal auto-sync: platform OpenAPI"
+            );
+        }
+        UseCaseResult::Failure(err) => {
+            warn!(error = ?err, "Developer-portal auto-sync: platform OpenAPI failed");
+        }
+    }
+
+    Ok(())
+}

@@ -27,21 +27,21 @@ class UpdateScheduledJobRequestNormalizer implements DenormalizerInterface, Norm
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\UpdateScheduledJobRequest();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\UpdateScheduledJobRequest();
         if (\array_key_exists('concurrent', $data) && \is_int($data['concurrent'])) {
             $data['concurrent'] = (bool) $data['concurrent'];
         }
         if (\array_key_exists('tracksCompletion', $data) && \is_int($data['tracksCompletion'])) {
             $data['tracksCompletion'] = (bool) $data['tracksCompletion'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('concurrent', $data) && $data['concurrent'] !== null) {
             $object->setConcurrent($data['concurrent']);

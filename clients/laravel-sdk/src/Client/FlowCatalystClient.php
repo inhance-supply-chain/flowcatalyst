@@ -8,12 +8,14 @@ use FlowCatalyst\Client\Auth\OidcTokenManager;
 use FlowCatalyst\Client\Auth\TokenProviderInterface;
 use FlowCatalyst\Client\Auth\UserTokenProvider;
 use FlowCatalyst\Client\Resources\Applications;
+use FlowCatalyst\Client\Resources\AuditLogs;
 use FlowCatalyst\Client\Resources\Clients;
 use FlowCatalyst\Client\Resources\DispatchPools;
 use FlowCatalyst\Client\Resources\EventTypes;
 use FlowCatalyst\Client\Resources\Me;
 use FlowCatalyst\Client\Resources\Permissions;
 use FlowCatalyst\Client\Resources\Principals;
+use FlowCatalyst\Client\Resources\Processes;
 use FlowCatalyst\Client\Resources\Roles;
 use FlowCatalyst\Client\Resources\Connections;
 use FlowCatalyst\Client\Resources\Router;
@@ -23,6 +25,7 @@ use FlowCatalyst\Exceptions\AuthenticationException;
 use FlowCatalyst\Exceptions\FlowCatalystException;
 use FlowCatalyst\Exceptions\ValidationException;
 use FlowCatalyst\Generated\Client as GeneratedClient;
+use FlowCatalyst\Sync\DefinitionSynchronizer;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
@@ -40,10 +43,13 @@ class FlowCatalystClient
     private ?Applications $applications = null;
     private ?Clients $clients = null;
     private ?Principals $principals = null;
+    private ?Processes $processes = null;
     private ?Connections $connections = null;
     private ?Me $me = null;
     private ?Router $router = null;
     private ?ScheduledJobs $scheduledJobs = null;
+    private ?AuditLogs $auditLogs = null;
+    private ?DefinitionSynchronizer $definitions = null;
 
     /**
      * Create a new FlowCatalyst client.
@@ -177,6 +183,14 @@ class FlowCatalystClient
     }
 
     /**
+     * Get the Processes resource (process documentation: CRUD + sync).
+     */
+    public function processes(): Processes
+    {
+        return $this->processes ??= new Processes($this);
+    }
+
+    /**
      * Get the Me resource (user-scoped access to clients and applications).
      *
      * Use this when making requests on behalf of a user to get only
@@ -207,6 +221,25 @@ class FlowCatalystClient
     public function scheduledJobs(): ScheduledJobs
     {
         return $this->scheduledJobs ??= new ScheduledJobs($this);
+    }
+
+    /**
+     * Read-only queries against the platform's audit-log table.
+     */
+    public function auditLogs(): AuditLogs
+    {
+        return $this->auditLogs ??= new AuditLogs($this);
+    }
+
+    /**
+     * Bulk synchronizer — push a `SyncDefinitionSet` (roles, event types,
+     * subscriptions, dispatch pools, principals, processes) for a single
+     * application in one orchestrated call. Mirrors the Rust SDK's
+     * `DefinitionSynchronizer` and the TS SDK's `client.definitions()`.
+     */
+    public function definitions(): DefinitionSynchronizer
+    {
+        return $this->definitions ??= new DefinitionSynchronizer($this);
     }
 
     /**

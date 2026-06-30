@@ -27,21 +27,21 @@ class PrincipalResponseNormalizer implements DenormalizerInterface, NormalizerIn
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\PrincipalResponse();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\PrincipalResponse();
         if (\array_key_exists('active', $data) && \is_int($data['active'])) {
             $data['active'] = (bool) $data['active'];
         }
         if (\array_key_exists('isAnchorUser', $data) && \is_int($data['isAnchorUser'])) {
             $data['isAnchorUser'] = (bool) $data['isAnchorUser'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('active', $data) && $data['active'] !== null) {
             $object->setActive($data['active']);

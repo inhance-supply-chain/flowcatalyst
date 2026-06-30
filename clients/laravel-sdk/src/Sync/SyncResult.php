@@ -16,6 +16,9 @@ final class SyncResult
      * @param array{created: int, updated: int, deleted: int, error?: string} $subscriptions Subscription sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $dispatchPools Dispatch pool sync results
      * @param array{created: int, updated: int, deleted: int, error?: string} $principals Principal sync results
+     * @param array{created: int, updated: int, deleted: int, error?: string} $processes Process sync results
+     * @param array{created: int, updated: int, deleted: int, error?: string} $scheduledJobs Scheduled-job sync results
+     * @param array{created: int, updated: int, deleted: int, error?: string, version?: string} $openapi OpenAPI-document publish result
      */
     public function __construct(
         public readonly string $applicationCode,
@@ -24,6 +27,9 @@ final class SyncResult
         public readonly array $subscriptions = ['created' => 0, 'updated' => 0, 'deleted' => 0],
         public readonly array $dispatchPools = ['created' => 0, 'updated' => 0, 'deleted' => 0],
         public readonly array $principals = ['created' => 0, 'updated' => 0, 'deleted' => 0],
+        public readonly array $processes = ['created' => 0, 'updated' => 0, 'deleted' => 0],
+        public readonly array $scheduledJobs = ['created' => 0, 'updated' => 0, 'deleted' => 0],
+        public readonly array $openapi = ['created' => 0, 'updated' => 0, 'deleted' => 0],
     ) {}
 
     /**
@@ -77,6 +83,36 @@ final class SyncResult
     }
 
     /**
+     * Check if any processes were synced.
+     */
+    public function hasProcessChanges(): bool
+    {
+        return ($this->processes['created'] ?? 0) > 0
+            || ($this->processes['updated'] ?? 0) > 0
+            || ($this->processes['deleted'] ?? 0) > 0;
+    }
+
+    /**
+     * Check if any scheduled jobs were synced.
+     */
+    public function hasScheduledJobChanges(): bool
+    {
+        return ($this->scheduledJobs['created'] ?? 0) > 0
+            || ($this->scheduledJobs['updated'] ?? 0) > 0
+            || ($this->scheduledJobs['deleted'] ?? 0) > 0;
+    }
+
+    /**
+     * Check if the OpenAPI document was published.
+     */
+    public function hasOpenapiChanges(): bool
+    {
+        return ($this->openapi['created'] ?? 0) > 0
+            || ($this->openapi['updated'] ?? 0) > 0
+            || ($this->openapi['deleted'] ?? 0) > 0;
+    }
+
+    /**
      * Check if any changes were made.
      */
     public function hasChanges(): bool
@@ -85,7 +121,10 @@ final class SyncResult
             || $this->hasEventTypeChanges()
             || $this->hasSubscriptionChanges()
             || $this->hasDispatchPoolChanges()
-            || $this->hasPrincipalChanges();
+            || $this->hasPrincipalChanges()
+            || $this->hasProcessChanges()
+            || $this->hasScheduledJobChanges()
+            || $this->hasOpenapiChanges();
     }
 
     /**
@@ -97,7 +136,10 @@ final class SyncResult
             || isset($this->eventTypes['error'])
             || isset($this->subscriptions['error'])
             || isset($this->dispatchPools['error'])
-            || isset($this->principals['error']);
+            || isset($this->principals['error'])
+            || isset($this->processes['error'])
+            || isset($this->scheduledJobs['error'])
+            || isset($this->openapi['error']);
     }
 
     /**
@@ -129,6 +171,18 @@ final class SyncResult
             $errors['principals'] = $this->principals['error'];
         }
 
+        if (isset($this->processes['error'])) {
+            $errors['processes'] = $this->processes['error'];
+        }
+
+        if (isset($this->scheduledJobs['error'])) {
+            $errors['scheduledJobs'] = $this->scheduledJobs['error'];
+        }
+
+        if (isset($this->openapi['error'])) {
+            $errors['openapi'] = $this->openapi['error'];
+        }
+
         return $errors;
     }
 
@@ -144,17 +198,26 @@ final class SyncResult
                 + ($this->eventTypes['created'] ?? 0)
                 + ($this->subscriptions['created'] ?? 0)
                 + ($this->dispatchPools['created'] ?? 0)
-                + ($this->principals['created'] ?? 0),
+                + ($this->principals['created'] ?? 0)
+                + ($this->processes['created'] ?? 0)
+                + ($this->scheduledJobs['created'] ?? 0)
+                + ($this->openapi['created'] ?? 0),
             'updated' => ($this->roles['updated'] ?? 0)
                 + ($this->eventTypes['updated'] ?? 0)
                 + ($this->subscriptions['updated'] ?? 0)
                 + ($this->dispatchPools['updated'] ?? 0)
-                + ($this->principals['updated'] ?? 0),
+                + ($this->principals['updated'] ?? 0)
+                + ($this->processes['updated'] ?? 0)
+                + ($this->scheduledJobs['updated'] ?? 0)
+                + ($this->openapi['updated'] ?? 0),
             'deleted' => ($this->roles['deleted'] ?? 0)
                 + ($this->eventTypes['deleted'] ?? 0)
                 + ($this->subscriptions['deleted'] ?? 0)
                 + ($this->dispatchPools['deleted'] ?? 0)
-                + ($this->principals['deleted'] ?? 0),
+                + ($this->principals['deleted'] ?? 0)
+                + ($this->processes['deleted'] ?? 0)
+                + ($this->scheduledJobs['deleted'] ?? 0)
+                + ($this->openapi['deleted'] ?? 0),
         ];
     }
 

@@ -42,6 +42,11 @@ coverage/
 docker-data/
 localstack-data/
 
+# Claude Code harness — runtime state, not shared.
+# settings.json IS tracked (project-shared); the lock + local override are not.
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+
 # LocalStack
 .localstack/
 /clients/typescript-sdk/dist

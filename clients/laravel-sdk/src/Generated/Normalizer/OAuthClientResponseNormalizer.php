@@ -27,21 +27,21 @@ class OAuthClientResponseNormalizer implements DenormalizerInterface, Normalizer
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\OAuthClientResponse();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\OAuthClientResponse();
         if (\array_key_exists('active', $data) && \is_int($data['active'])) {
             $data['active'] = (bool) $data['active'];
         }
         if (\array_key_exists('pkceRequired', $data) && \is_int($data['pkceRequired'])) {
             $data['pkceRequired'] = (bool) $data['pkceRequired'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('active', $data) && $data['active'] !== null) {
             $object->setActive($data['active']);
@@ -143,12 +143,23 @@ class OAuthClientResponseNormalizer implements DenormalizerInterface, Normalizer
         elseif (\array_key_exists('pkceRequired', $data) && $data['pkceRequired'] === null) {
             $object->setPkceRequired(null);
         }
-        if (\array_key_exists('redirectUris', $data) && $data['redirectUris'] !== null) {
+        if (\array_key_exists('postLogoutRedirectUris', $data) && $data['postLogoutRedirectUris'] !== null) {
             $values_4 = [];
-            foreach ($data['redirectUris'] as $value_4) {
+            foreach ($data['postLogoutRedirectUris'] as $value_4) {
                 $values_4[] = $value_4;
             }
-            $object->setRedirectUris($values_4);
+            $object->setPostLogoutRedirectUris($values_4);
+            unset($data['postLogoutRedirectUris']);
+        }
+        elseif (\array_key_exists('postLogoutRedirectUris', $data) && $data['postLogoutRedirectUris'] === null) {
+            $object->setPostLogoutRedirectUris(null);
+        }
+        if (\array_key_exists('redirectUris', $data) && $data['redirectUris'] !== null) {
+            $values_5 = [];
+            foreach ($data['redirectUris'] as $value_5) {
+                $values_5[] = $value_5;
+            }
+            $object->setRedirectUris($values_5);
             unset($data['redirectUris']);
         }
         elseif (\array_key_exists('redirectUris', $data) && $data['redirectUris'] === null) {
@@ -168,9 +179,9 @@ class OAuthClientResponseNormalizer implements DenormalizerInterface, Normalizer
         elseif (\array_key_exists('updatedAt', $data) && $data['updatedAt'] === null) {
             $object->setUpdatedAt(null);
         }
-        foreach ($data as $key => $value_5) {
+        foreach ($data as $key => $value_6) {
             if (preg_match('/.*/', (string) $key)) {
-                $object[$key] = $value_5;
+                $object[$key] = $value_6;
             }
         }
         return $object;
@@ -210,18 +221,25 @@ class OAuthClientResponseNormalizer implements DenormalizerInterface, Normalizer
         $dataArray['grantTypes'] = $values_3;
         $dataArray['id'] = $data->getId();
         $dataArray['pkceRequired'] = $data->getPkceRequired();
-        $values_4 = [];
-        foreach ($data->getRedirectUris() as $value_4) {
-            $values_4[] = $value_4;
+        if ($data->isInitialized('postLogoutRedirectUris') && null !== $data->getPostLogoutRedirectUris()) {
+            $values_4 = [];
+            foreach ($data->getPostLogoutRedirectUris() as $value_4) {
+                $values_4[] = $value_4;
+            }
+            $dataArray['postLogoutRedirectUris'] = $values_4;
         }
-        $dataArray['redirectUris'] = $values_4;
+        $values_5 = [];
+        foreach ($data->getRedirectUris() as $value_5) {
+            $values_5[] = $value_5;
+        }
+        $dataArray['redirectUris'] = $values_5;
         if ($data->isInitialized('serviceAccountPrincipalId')) {
             $dataArray['serviceAccountPrincipalId'] = $data->getServiceAccountPrincipalId();
         }
         $dataArray['updatedAt'] = $data->getUpdatedAt();
-        foreach ($data as $key => $value_5) {
+        foreach ($data as $key => $value_6) {
             if (preg_match('/.*/', (string) $key)) {
-                $dataArray[$key] = $value_5;
+                $dataArray[$key] = $value_6;
             }
         }
         return $dataArray;

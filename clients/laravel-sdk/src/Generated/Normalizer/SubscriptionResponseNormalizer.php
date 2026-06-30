@@ -27,21 +27,21 @@ class SubscriptionResponseNormalizer implements DenormalizerInterface, Normalize
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\SubscriptionResponse();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\SubscriptionResponse();
         if (\array_key_exists('clientScoped', $data) && \is_int($data['clientScoped'])) {
             $data['clientScoped'] = (bool) $data['clientScoped'];
         }
         if (\array_key_exists('dataOnly', $data) && \is_int($data['dataOnly'])) {
             $data['dataOnly'] = (bool) $data['dataOnly'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
             $object->setApplicationCode($data['applicationCode']);

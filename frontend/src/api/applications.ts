@@ -13,7 +13,12 @@ export interface Application {
 	website?: string;
 	logo?: string;
 	logoMimeType?: string;
-	serviceAccountPrincipalId?: string;
+	serviceAccountId?: string;
+	/**
+	 * True iff this application has a login OAuth client provisioned.
+	 * Set by the detail endpoint; absent on list responses.
+	 */
+	hasLoginClient?: boolean;
 	active: boolean;
 	createdAt: string;
 	updatedAt: string;
@@ -114,7 +119,7 @@ export const applicationsApi = {
 		});
 	},
 
-	update(id: string, data: UpdateApplicationRequest): Promise<Application> {
+	update(id: string, data: UpdateApplicationRequest): Promise<void> {
 		return apiFetch(`/applications/${id}`, {
 			method: "PUT",
 			body: JSON.stringify(data),
@@ -145,4 +150,48 @@ export const applicationsApi = {
 			method: "POST",
 		});
 	},
+
+	/**
+	 * Provision a user-login OAuth client for an existing application.
+	 *
+	 * - `PUBLIC` clients (default — SPAs, native apps) enforce PKCE and return
+	 *   no `clientSecret`; protect the `clientId` and rely on the PKCE flow.
+	 * - `CONFIDENTIAL` clients (server-rendered apps) get a `clientSecret`
+	 *   returned exactly once.
+	 *
+	 * 409 if a login client already exists for the application — rotate the
+	 * existing one via the OAuth Clients page, or delete it before
+	 * re-provisioning.
+	 */
+	provisionLoginClient(
+		id: string,
+		body: ProvisionLoginClientRequest,
+	): Promise<{
+		message: string;
+		loginClient: LoginClientCredentials;
+	}> {
+		return apiFetch(`/applications/${id}/provision-login-client`, {
+			method: "POST",
+			body: JSON.stringify(body),
+		});
+	},
 };
+
+/** Request body for `provisionLoginClient`. */
+export interface ProvisionLoginClientRequest {
+	clientType?: "PUBLIC" | "CONFIDENTIAL";
+	redirectUris: string[];
+	allowedOrigins?: string[];
+}
+
+/** Credentials returned from `provisionLoginClient`. */
+export interface LoginClientCredentials {
+	clientType: "PUBLIC" | "CONFIDENTIAL";
+	redirectUris: string[];
+	oauthClient: {
+		id: string;
+		clientId: string;
+		/** Only present for CONFIDENTIAL clients. */
+		clientSecret?: string;
+	};
+}

@@ -5,8 +5,8 @@
  */
 
 import { ResultAsync } from "neverthrow";
-import type { AuthenticationError } from "./errors";
-import { authError } from "./errors";
+import type { AuthenticationError } from "./errors.js";
+import { authError } from "./errors.js";
 
 export interface TokenManagerConfig {
 	/** Base URL of the FlowCatalyst platform */

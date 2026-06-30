@@ -142,6 +142,44 @@ impl From<MessageRouterConfigResponse> for RouterConfig {
     }
 }
 
+/// Typed error for the configuration fetch/parse pipeline.
+///
+/// Replaces the previous ad-hoc `Result<_, String>` so callers can match on
+/// the failure kind (e.g. distinguish a bad HTTP status from a parse error)
+/// instead of string-sniffing. Every variant carries the source `url` because
+/// fetches fan out across multiple config endpoints and the operator needs to
+/// know which one failed. It derives `Clone` (the network/codec source errors
+/// are flattened to `String`/`StatusCode`) so the retry loop can hold the last
+/// error without juggling non-`Clone` `reqwest::Error`s. `Display` text is kept
+/// byte-for-byte compatible with the old format strings, since these messages
+/// are logged and surfaced at startup.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ConfigSyncError {
+    #[error("No config URLs configured")]
+    NoUrls,
+
+    #[error("HTTP request failed ({url}): {message}")]
+    Request { url: String, message: String },
+
+    #[error("Config service returned status {status} ({url})")]
+    BadStatus {
+        url: String,
+        status: reqwest::StatusCode,
+    },
+
+    #[error("Failed to read response body ({url}): {message}")]
+    Body { url: String, message: String },
+
+    #[error("Failed to parse config response ({url}): {message}")]
+    Parse { url: String, message: String },
+
+    #[error("All {attempted} config source(s) failed — {summary}")]
+    AllSourcesFailed { attempted: usize, summary: String },
+
+    #[error("Failed to apply config: {0}")]
+    Apply(String),
+}
+
 /// Configuration sync result
 #[derive(Debug, Clone)]
 pub struct ConfigSyncResult {
@@ -190,9 +228,9 @@ impl ConfigSyncService {
     /// Merge strategy (union, first-wins; matches `multi-config-client.ts`):
     /// - Pools deduped by `code`; warn on conflicting duplicates.
     /// - Queues deduped by `uri`; warn on conflicting duplicates.
-    pub async fn fetch_config(&self) -> Result<RouterConfig, String> {
+    pub async fn fetch_config(&self) -> Result<RouterConfig, ConfigSyncError> {
         if self.config.config_urls.is_empty() {
-            return Err("No config URLs configured".to_string());
+            return Err(ConfigSyncError::NoUrls);
         }
 
         // Fetch all sources in parallel.
@@ -212,7 +250,7 @@ impl ConfigSyncService {
         let results = futures::future::join_all(tasks).await;
 
         let mut successes: Vec<(String, RouterConfig)> = Vec::new();
-        let mut failures: Vec<(String, String)> = Vec::new();
+        let mut failures: Vec<(String, ConfigSyncError)> = Vec::new();
         for (url, result) in results {
             match result {
                 Ok(cfg) => successes.push((url, cfg)),
@@ -229,11 +267,10 @@ impl ConfigSyncService {
                 .map(|(u, e)| format!("{}: {}", u, e))
                 .collect::<Vec<_>>()
                 .join("; ");
-            return Err(format!(
-                "All {} config source(s) failed — {}",
-                failures.len(),
-                summary
-            ));
+            return Err(ConfigSyncError::AllSourcesFailed {
+                attempted: failures.len(),
+                summary,
+            });
         }
 
         let merged = merge_configs(&successes);
@@ -251,8 +288,8 @@ impl ConfigSyncService {
     }
 
     /// Fetch configuration from a single URL with retry logic
-    async fn fetch_config_from_url(&self, url: &str) -> Result<RouterConfig, String> {
-        let mut last_error = String::new();
+    async fn fetch_config_from_url(&self, url: &str) -> Result<RouterConfig, ConfigSyncError> {
+        let mut last_error: Option<ConfigSyncError> = None;
 
         for attempt in 1..=self.config.max_retry_attempts {
             debug!(
@@ -274,7 +311,6 @@ impl ConfigSyncService {
                     return Ok(config);
                 }
                 Err(e) => {
-                    last_error = e.clone();
                     if attempt < self.config.max_retry_attempts {
                         warn!(
                             attempt = attempt,
@@ -284,11 +320,21 @@ impl ConfigSyncService {
                             retry_delay_secs = self.config.retry_delay.as_secs(),
                             "Failed to fetch config, retrying..."
                         );
+                        last_error = Some(e);
                         tokio::time::sleep(self.config.retry_delay).await;
+                    } else {
+                        last_error = Some(e);
                     }
                 }
             }
         }
+
+        // Loop runs at least once (max_retry_attempts >= 1 in practice), so
+        // last_error is set; fall back defensively if configured to 0.
+        let last_error = last_error.unwrap_or_else(|| ConfigSyncError::Request {
+            url: url.to_string(),
+            message: "no fetch attempts were made (max_retry_attempts = 0)".to_string(),
+        });
 
         error!(
             attempts = self.config.max_retry_attempts,
@@ -301,26 +347,29 @@ impl ConfigSyncService {
     }
 
     /// Single fetch attempt from a specific URL
-    async fn fetch_config_once(&self, url: &str) -> Result<RouterConfig, String> {
+    async fn fetch_config_once(&self, url: &str) -> Result<RouterConfig, ConfigSyncError> {
         let response = self
             .http_client
             .get(url)
             .send()
             .await
-            .map_err(|e| format!("HTTP request failed ({}): {}", url, e))?;
+            .map_err(|e| ConfigSyncError::Request {
+                url: url.to_string(),
+                message: e.to_string(),
+            })?;
 
         let status = response.status();
         if !status.is_success() {
-            return Err(format!(
-                "Config service returned status {} ({})",
-                status, url
-            ));
+            return Err(ConfigSyncError::BadStatus {
+                url: url.to_string(),
+                status,
+            });
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read response body ({}): {}", url, e))?;
+        let body = response.text().await.map_err(|e| ConfigSyncError::Body {
+            url: url.to_string(),
+            message: e.to_string(),
+        })?;
 
         debug!(url = %url, body_length = body.len(), "Config response received");
 
@@ -332,12 +381,10 @@ impl ConfigSyncService {
                     body = %body.chars().take(500).collect::<String>(),
                     "Failed to parse config response"
                 );
-                format!(
-                    "Failed to parse config response ({}): {} — body: {}",
-                    url,
-                    e,
-                    &body[..body.len().min(200)]
-                )
+                ConfigSyncError::Parse {
+                    url: url.to_string(),
+                    message: format!("{} — body: {}", e, &body[..body.len().min(200)]),
+                }
             })?;
 
         Ok(config_response.into())
@@ -386,7 +433,7 @@ impl ConfigSyncService {
                     pools_updated: 0,
                     pools_created: 0,
                     pools_removed: 0,
-                    error: Some(e),
+                    error: Some(e.to_string()),
                 };
             }
         };
@@ -474,7 +521,7 @@ impl ConfigSyncService {
 
     /// Perform initial sync (blocks until successful or fails)
     /// Returns the fetched RouterConfig on success so consumers can be created from queue URLs
-    pub async fn initial_sync(&self) -> Result<RouterConfig, String> {
+    pub async fn initial_sync(&self) -> Result<RouterConfig, ConfigSyncError> {
         info!("Performing initial configuration sync...");
 
         // Fetch config first
@@ -482,7 +529,7 @@ impl ConfigSyncService {
 
         // Apply to queue manager
         if let Err(e) = self.queue_manager.reload_config(config.clone()).await {
-            let error = format!("Failed to apply config: {}", e);
+            let error = ConfigSyncError::Apply(e.to_string());
             if self.config.fail_on_initial_sync_error {
                 return Err(error);
             } else {

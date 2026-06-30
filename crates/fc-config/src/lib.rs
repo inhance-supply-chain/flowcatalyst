@@ -1,6 +1,34 @@
-//! FlowCatalyst Configuration System
+//! # FlowCatalyst configuration
 //!
-//! This crate provides TOML-based configuration with environment variable override support.
+//! TOML-based configuration loader with environment-variable overrides.
+//! Used by every binary in the workspace (`fc-router`, `fc-server`,
+//! `fc-dev`, `fc-outbox-processor`) to materialise [`AppConfig`] at
+//! startup.
+//!
+//! ## Mental model
+//!
+//! - **[`AppConfig`]** — the root, parsed from a TOML file. Each field
+//!   is a sub-config (`http`, `redis`, `queue`, `router`, `stream`,
+//!   `outbox`, `scheduler`, `auth`, …). Defaults via `#[serde(default)]`
+//!   so an empty file still produces a usable config.
+//! - **[`ConfigLoader`]** — loads `config.toml` (or a path given on the
+//!   CLI), applies `FC_*` env-var overrides, and yields an [`AppConfig`].
+//!   Env-var overrides follow the `FC_<section>__<field>` convention
+//!   (double underscore separates nested keys).
+//! - **[`ConfigError`]** — wraps the underlying io / toml / validation
+//!   failure modes for callers.
+//!
+//! ## Public surface
+//!
+//! Callers usually want just [`ConfigLoader`] and [`AppConfig`]. The
+//! per-component sub-config structs are public so that downstream code
+//! (`fc-router::QueueManager`, etc.) can take them directly without
+//! copying field by field.
+//!
+//! ## Where to look first
+//!
+//! - Adding a new section: [`AppConfig`] in this file.
+//! - Adjusting how env-var overrides are applied: `loader.rs`.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

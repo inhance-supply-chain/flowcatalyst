@@ -7,13 +7,36 @@ license.workspace = true
 description = "FlowCatalyst SDK for Rust — domain event patterns, outbox integration, and platform API client"
 
 [features]
-default = ["outbox-postgres"]
+default = ["outbox-postgres", "cache", "lock"]
 outbox-postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
 outbox-sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/chrono"]
 outbox-mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/chrono"]
 client = ["dep:reqwest"]
 auth = ["dep:reqwest", "dep:jsonwebtoken", "dep:sha2", "dep:base64", "dep:rand"]
+# Axum integration for `auth` — extractors, middleware, RBAC catalogue,
+# AES-GCM cookie session storage, and OIDC login/callback handlers.
+axum = ["auth", "dep:axum", "dep:axum-extra", "dep:tower", "dep:aes-gcm", "dep:urlencoding", "dep:bytes", "dep:time"]
+# Server-side session storage for `axum` (in addition to the default
+# AES-GCM cookie store). Opt in with the backend you want.
+axum-session-postgres = ["axum", "dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
+axum-session-redis = ["axum", "dep:redis"]
 webhook = ["dep:hmac", "dep:sha2", "dep:hex"]
+
+# Cache primitive — Memory backend ships with the `cache` feature; the
+# Postgres and Redis backends pull in sqlx / the redis crate on demand.
+cache = []
+cache-postgres = ["cache", "dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
+cache-redis = ["cache", "dep:redis"]
+
+# Distributed lock primitive — same structure as cache.
+lock = ["dep:uuid"]
+lock-postgres = ["lock", "dep:sqlx", "sqlx/postgres", "sqlx/chrono"]
+lock-redis = ["lock", "dep:redis"]
+
+# Scheduled-job runner — consumer-side dispatch + lock + completion callback.
+# Requires `client` (for log/complete callbacks) and `lock` (for concurrency
+# control on `concurrent: false` jobs).
+scheduled-jobs-runner = ["client", "lock"]
 
 [dependencies]
 # Core (always included)
@@ -43,9 +66,38 @@ getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
 hmac = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 
+# Axum integration (optional)
+axum = { workspace = true, optional = true }
+axum-extra = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+aes-gcm = { workspace = true, optional = true }
+urlencoding = { version = "2.1", optional = true }
+bytes = { version = "1", optional = true }
+time = { version = "0.3", optional = true }
+
+# Cache + lock backends (optional, gated by feature flags above)
+redis = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
 # Tokio needed for JwksCache RwLock
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 tokio = { workspace = true }
 tokio-test = { workspace = true }
+
+# Examples are gated on the features they use so `cargo build/clippy/test
+# --all-targets` (run without these features in CI) skips them instead of
+# failing to resolve `fc_sdk::client` / `fc_sdk::scheduled_jobs`. Run them
+# with the matching --features (see the crate-level docs).
+[[example]]
+name = "fc-sync"
+required-features = ["client"]
+
+[[example]]
+name = "list-event-types"
+required-features = ["client"]
+
+[[example]]
+name = "scheduled-jobs-runner"
+required-features = ["scheduled-jobs-runner", "axum"]

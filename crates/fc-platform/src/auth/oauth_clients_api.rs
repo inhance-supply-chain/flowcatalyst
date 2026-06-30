@@ -39,6 +39,10 @@ pub struct CreateOAuthClientRequest {
     #[serde(default)]
     pub redirect_uris: Vec<String>,
 
+    /// Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+    #[serde(default)]
+    pub post_logout_redirect_uris: Vec<String>,
+
     /// Allowed grant types
     #[serde(default)]
     pub grant_types: Vec<String>,
@@ -61,6 +65,9 @@ pub struct UpdateOAuthClientRequest {
 
     /// Allowed redirect URIs
     pub redirect_uris: Option<Vec<String>>,
+
+    /// Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+    pub post_logout_redirect_uris: Option<Vec<String>>,
 
     /// Allowed grant types
     pub grant_types: Option<Vec<String>>,
@@ -87,6 +94,8 @@ pub struct OAuthClientResponse {
     pub client_name: String,
     pub client_type: String,
     pub redirect_uris: Vec<String>,
+    #[serde(default)]
+    pub post_logout_redirect_uris: Vec<String>,
     pub grant_types: Vec<String>,
     pub default_scopes: Vec<String>,
     pub pkce_required: bool,
@@ -110,6 +119,7 @@ impl From<OAuthClient> for OAuthClientResponse {
             client_name: c.client_name,
             client_type: format!("{:?}", c.client_type).to_uppercase(),
             redirect_uris: c.redirect_uris,
+            post_logout_redirect_uris: c.post_logout_redirect_uris,
             grant_types: c
                 .grant_types
                 .iter()
@@ -191,7 +201,7 @@ fn parse_client_type(s: &str) -> OAuthClientType {
     post,
     path = "",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClients",
+    operation_id = "postApiOauthClients",
     request_body = CreateOAuthClientRequest,
     responses(
         (status = 201, description = "OAuth client created", body = CreateOAuthClientResponse),
@@ -263,6 +273,7 @@ pub async fn create_oauth_client(
         client_type,
         client_secret_ref,
         redirect_uris: req.redirect_uris,
+        post_logout_redirect_uris: req.post_logout_redirect_uris,
         grant_types,
         default_scopes: vec![],
         pkce_required: req
@@ -299,7 +310,7 @@ pub async fn create_oauth_client(
     get,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "getApiAdminOauthClientsById",
+    operation_id = "getApiOauthClientsById",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -330,7 +341,7 @@ pub async fn get_oauth_client(
     get,
     path = "",
     tag = "oauth-clients",
-    operation_id = "getApiAdminOauthClients",
+    operation_id = "getApiOauthClients",
     params(OAuthClientsQuery),
     responses(
         (status = 200, description = "List of OAuth clients", body = OAuthClientListResponse)
@@ -360,7 +371,7 @@ pub async fn list_oauth_clients(
     put,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "putApiAdminOauthClientsById",
+    operation_id = "putApiOauthClientsById",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -386,6 +397,7 @@ pub async fn update_oauth_client(
         oauth_client_id: id,
         client_name: req.client_name,
         redirect_uris: req.redirect_uris,
+        post_logout_redirect_uris: req.post_logout_redirect_uris,
         grant_types: req.grant_types,
         pkce_required: req.pkce_required,
         application_ids: req.application_ids,
@@ -407,7 +419,7 @@ pub async fn update_oauth_client(
     delete,
     path = "/{id}",
     tag = "oauth-clients",
-    operation_id = "deleteApiAdminOauthClientsById",
+    operation_id = "deleteApiOauthClientsById",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -453,7 +465,7 @@ pub struct RegenerateSecretResponse {
     get,
     path = "/by-client-id/{clientId}",
     tag = "oauth-clients",
-    operation_id = "getApiAdminOauthClientsByClientId",
+    operation_id = "getApiOauthClientsByClientId",
     params(
         ("clientId" = String, Path, description = "OAuth client_id (public identifier)")
     ),
@@ -484,7 +496,7 @@ pub async fn get_oauth_client_by_client_id(
     post,
     path = "/{id}/activate",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClientsActivate",
+    operation_id = "postApiOauthClientsActivate",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -524,7 +536,7 @@ pub async fn activate_oauth_client(
     post,
     path = "/{id}/deactivate",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClientsDeactivate",
+    operation_id = "postApiOauthClientsDeactivate",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -564,7 +576,7 @@ pub async fn deactivate_oauth_client(
     post,
     path = "/{id}/regenerate-secret",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClientsRegenerateSecret",
+    operation_id = "postApiOauthClientsRegenerateSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),
@@ -617,7 +629,7 @@ pub async fn regenerate_oauth_client_secret(
     post,
     path = "/{id}/rotate-secret",
     tag = "oauth-clients",
-    operation_id = "postApiAdminOauthClientsRotateSecret",
+    operation_id = "postApiOauthClientsRotateSecret",
     params(
         ("id" = String, Path, description = "OAuth client ID")
     ),

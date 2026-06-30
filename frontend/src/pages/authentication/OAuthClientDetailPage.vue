@@ -21,6 +21,7 @@ const isEditing = ref(false);
 const editForm = ref({
 	clientName: "",
 	redirectUris: [] as string[],
+	postLogoutRedirectUris: [] as string[],
 	allowedOrigins: [] as string[],
 	grantTypes: [] as string[],
 	defaultScopes: [] as string[],
@@ -28,6 +29,7 @@ const editForm = ref({
 	applicationIds: [] as string[],
 });
 const newRedirectUri = ref("");
+const newPostLogoutRedirectUri = ref("");
 const newAllowedOrigin = ref("");
 
 // Secret rotation dialog
@@ -120,6 +122,7 @@ function resetEditForm() {
 		editForm.value = {
 			clientName: client.value.clientName || "",
 			redirectUris: [...(client.value.redirectUris || [])],
+			postLogoutRedirectUris: [...(client.value.postLogoutRedirectUris || [])],
 			allowedOrigins: [...(client.value.allowedOrigins || [])],
 			grantTypes: [...(client.value.grantTypes || [])],
 			defaultScopes: [...(client.value.defaultScopes || [])],
@@ -157,6 +160,23 @@ function removeRedirectUri(uri: string) {
 	);
 }
 
+function addPostLogoutRedirectUri() {
+	const uri = newPostLogoutRedirectUri.value.trim();
+	if (uri && !editForm.value.postLogoutRedirectUris.includes(uri)) {
+		try {
+			new URL(uri);
+			editForm.value.postLogoutRedirectUris.push(uri);
+			newPostLogoutRedirectUri.value = "";
+		} catch {
+		}
+	}
+}
+
+function removePostLogoutRedirectUri(uri: string) {
+	editForm.value.postLogoutRedirectUris =
+		editForm.value.postLogoutRedirectUris.filter((u) => u !== uri);
+}
+
 function addAllowedOrigin() {
 	const origin = newAllowedOrigin.value.trim();
 	if (origin && !editForm.value.allowedOrigins.includes(origin)) {
@@ -186,9 +206,10 @@ async function saveChanges() {
 	error.value = null;
 
 	try {
-		const updated = await oauthClientsApi.update(client.value.id, {
+		await oauthClientsApi.update(client.value.id, {
 			clientName: editForm.value.clientName.trim(),
 			redirectUris: editForm.value.redirectUris,
+			postLogoutRedirectUris: editForm.value.postLogoutRedirectUris,
 			allowedOrigins: editForm.value.allowedOrigins,
 			grantTypes: editForm.value.grantTypes,
 			defaultScopes: editForm.value.defaultScopes,
@@ -196,7 +217,7 @@ async function saveChanges() {
 			applicationIds: editForm.value.applicationIds,
 		});
 
-		client.value = updated;
+		await loadClient();
 		isEditing.value = false;
 		toast.success("Success", "OAuth client updated successfully");
 	} catch (e: unknown) {
@@ -332,6 +353,24 @@ function getClientTypeSeverity(clientType: string) {
             </div>
 
             <div class="field-group">
+              <label>Post-Logout Redirect URIs</label>
+              <div
+                v-if="
+                  client.postLogoutRedirectUris &&
+                  client.postLogoutRedirectUris.length > 0
+                "
+                class="uri-list"
+              >
+                <Chip
+                  v-for="uri in client.postLogoutRedirectUris"
+                  :key="uri"
+                  :label="uri"
+                />
+              </div>
+              <span v-else class="text-muted">No post-logout redirects configured</span>
+            </div>
+
+            <div class="field-group">
               <label>Allowed CORS Origins</label>
               <div
                 v-if="client.allowedOrigins && client.allowedOrigins.length > 0"
@@ -449,6 +488,39 @@ function getClientTypeSeverity(clientType: string) {
                 />
               </div>
               <small class="field-help">Must use HTTPS (except localhost).</small>
+            </div>
+
+            <div class="field">
+              <label>Post-Logout Redirect URIs</label>
+              <div class="redirect-uri-input">
+                <InputText
+                  v-model="newPostLogoutRedirectUri"
+                  placeholder="https://app.example.com/logged-out"
+                  class="flex-grow"
+                  @keyup.enter="addPostLogoutRedirectUri"
+                />
+                <Button
+                  icon="pi pi-plus"
+                  @click="addPostLogoutRedirectUri"
+                  :disabled="!newPostLogoutRedirectUri.trim()"
+                />
+              </div>
+              <div
+                v-if="editForm.postLogoutRedirectUris.length > 0"
+                class="uri-list"
+              >
+                <Chip
+                  v-for="uri in editForm.postLogoutRedirectUris"
+                  :key="uri"
+                  :label="uri"
+                  removable
+                  @remove="removePostLogoutRedirectUri(uri)"
+                />
+              </div>
+              <small class="field-help">
+                OIDC RP-Initiated Logout. Required for session-end redirects — callers must also
+                send id_token_hint.
+              </small>
             </div>
 
             <div class="field">

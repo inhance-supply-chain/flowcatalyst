@@ -52,6 +52,15 @@ final class SyncDefinitionSet
     /** @var array<PrincipalDefinition|array<string, mixed>> */
     private array $principals = [];
 
+    /** @var array<ScheduledJobDefinition|array<string, mixed>> */
+    private array $scheduledJobs = [];
+
+    /** OpenAPI document (parsed JSON) — single value, not a list. */
+    private mixed $openapiSpec = null;
+
+    /** @var array<ProcessDefinition|array<string, mixed>> */
+    private array $processes = [];
+
     public function __construct(
         public readonly string $applicationCode,
     ) {}
@@ -258,6 +267,113 @@ final class SyncDefinitionSet
     }
 
     /**
+     * Add processes to the definition set.
+     *
+     * @param array<ProcessDefinition|array<string, mixed>> $processes
+     */
+    public function withProcesses(array $processes): self
+    {
+        $clone = clone $this;
+        $clone->processes = $processes;
+        return $clone;
+    }
+
+    /**
+     * Add a single process to the definition set.
+     *
+     * @param ProcessDefinition|array<string, mixed> $process
+     */
+    public function addProcess(ProcessDefinition|array $process): self
+    {
+        $clone = clone $this;
+        $clone->processes = [...$this->processes, $process];
+        return $clone;
+    }
+
+    /**
+     * Get processes as arrays for the sync API.
+     *
+     * @return array<array<string, mixed>>
+     */
+    public function getProcesses(): array
+    {
+        return array_map(
+            fn($p) => $p instanceof ProcessDefinition ? $p->toArray() : $p,
+            $this->processes
+        );
+    }
+
+    /**
+     * Check if there are any processes to sync.
+     */
+    public function hasProcesses(): bool
+    {
+        return !empty($this->processes);
+    }
+
+    /**
+     * Add scheduled jobs to the definition set.
+     *
+     * @param array<ScheduledJobDefinition|array<string, mixed>> $scheduledJobs
+     */
+    public function withScheduledJobs(array $scheduledJobs): self
+    {
+        $clone = clone $this;
+        $clone->scheduledJobs = $scheduledJobs;
+        return $clone;
+    }
+
+    /**
+     * Add a single scheduled job to the definition set.
+     *
+     * @param ScheduledJobDefinition|array<string, mixed> $job
+     */
+    public function addScheduledJob(ScheduledJobDefinition|array $job): self
+    {
+        $clone = clone $this;
+        $clone->scheduledJobs = [...$this->scheduledJobs, $job];
+        return $clone;
+    }
+
+    /**
+     * Get scheduled jobs as arrays for the sync API.
+     *
+     * @return array<array<string, mixed>>
+     */
+    public function getScheduledJobs(): array
+    {
+        return array_map(
+            fn($j) => $j instanceof ScheduledJobDefinition ? $j->toArray() : $j,
+            $this->scheduledJobs
+        );
+    }
+
+    public function hasScheduledJobs(): bool
+    {
+        return !empty($this->scheduledJobs);
+    }
+
+    /**
+     * Attach an OpenAPI document (parsed JSON) to publish on next sync.
+     */
+    public function withOpenapiSpec(mixed $spec): self
+    {
+        $clone = clone $this;
+        $clone->openapiSpec = $spec;
+        return $clone;
+    }
+
+    public function getOpenapiSpec(): mixed
+    {
+        return $this->openapiSpec;
+    }
+
+    public function hasOpenapiSpec(): bool
+    {
+        return $this->openapiSpec !== null;
+    }
+
+    /**
      * Check if there are any roles to sync.
      */
     public function hasRoles(): bool
@@ -294,14 +410,21 @@ final class SyncDefinitionSet
      */
     public function isEmpty(): bool
     {
-        return !$this->hasRoles() && !$this->hasEventTypes() && !$this->hasSubscriptions() && !$this->hasDispatchPools() && !$this->hasPrincipals();
+        return !$this->hasRoles()
+            && !$this->hasEventTypes()
+            && !$this->hasSubscriptions()
+            && !$this->hasDispatchPools()
+            && !$this->hasPrincipals()
+            && !$this->hasProcesses()
+            && !$this->hasScheduledJobs()
+            && !$this->hasOpenapiSpec();
     }
 
     /**
      * Create from the scanned definitions repository format.
      *
      * @param string $applicationCode
-     * @param array{roles?: array<array<string, mixed>>, eventTypes?: array<array<string, mixed>>, subscriptions?: array<array<string, mixed>>, dispatchPools?: array<array<string, mixed>>, principals?: array<array<string, mixed>>} $data
+     * @param array{roles?: array<array<string, mixed>>, eventTypes?: array<array<string, mixed>>, subscriptions?: array<array<string, mixed>>, dispatchPools?: array<array<string, mixed>>, principals?: array<array<string, mixed>>, processes?: array<array<string, mixed>>} $data
      */
     public static function fromScannedDefinitions(string $applicationCode, array $data): self
     {
@@ -332,6 +455,20 @@ final class SyncDefinitionSet
             unset($principal['_class']);
             return $principal;
         }, $data['principals'] ?? []);
+
+        $set->processes = array_map(function ($process) {
+            unset($process['_class']);
+            return $process;
+        }, $data['processes'] ?? []);
+
+        $set->scheduledJobs = array_map(function ($job) {
+            unset($job['_class']);
+            return $job;
+        }, $data['scheduledJobs'] ?? []);
+
+        if (isset($data['openapiSpec'])) {
+            $set->openapiSpec = $data['openapiSpec'];
+        }
 
         return $set;
     }

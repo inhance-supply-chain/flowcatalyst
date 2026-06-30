@@ -1,3 +1,39 @@
+//! # FlowCatalyst common types
+//!
+//! Shared data types and small utility modules used across every other
+//! crate in the workspace (router, platform, queue, SDK, …). Keep this
+//! crate dependency-light: anything that pulls in heavy infrastructure
+//! (sqlx, reqwest, axum, …) belongs in `fc-platform` or `fc-router`.
+//!
+//! ## Mental model
+//!
+//! - **`Message` / `QueuedMessage`** — the message envelope that flows
+//!   between consumers, pools, and mediators. Wire-compatible with the
+//!   Java port via camelCase serde.
+//! - **`MediationOutcome` / `MediationResult`** — what mediation returned;
+//!   drives ack/nack and retry decisions.
+//! - **`PoolConfig` / `QueueConfig` / `RouterConfig`** — runtime
+//!   configuration of process pools and queues. Loaded from TOML or
+//!   synced from the platform.
+//! - **`Warning` / `HealthStatus` / pool metrics** — operational
+//!   surfaces consumed by the monitoring API.
+//! - **`OutboxItem` / `OutboxStatus`** — the transactional outbox row,
+//!   shared with `fc-outbox` and `fc-sdk`.
+//! - **`tsid`** — prefixed TSID generation; the canonical entity-id
+//!   format across the platform.
+//!
+//! ## Public surface
+//!
+//! Most callers want the top-level types ([`Message`], [`MediationOutcome`],
+//! [`PoolConfig`], [`Warning`]) and the [`tsid::EntityType`] enum used
+//! everywhere ids are minted. Submodules [`config`] and [`logging`]
+//! configure runtime infrastructure.
+//!
+//! ## Where to look first
+//!
+//! - Wire format: this file (`lib.rs`) — every shared DTO lives here.
+//! - Id minting: [`tsid`].
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

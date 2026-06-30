@@ -27,18 +27,18 @@ class StandbyStatusNormalizer implements DenormalizerInterface, NormalizerInterf
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\StandbyStatus();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\StandbyStatus();
         if (\array_key_exists('isLeader', $data) && \is_int($data['isLeader'])) {
             $data['isLeader'] = (bool) $data['isLeader'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('clusterMembers', $data) && $data['clusterMembers'] !== null) {
             $values = [];

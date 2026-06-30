@@ -99,7 +99,14 @@ impl WarningService {
 
         warnings.insert(id.clone(), warning.clone());
 
-        // Send notification if service is configured
+        // Send notification if service is configured.
+        //
+        // **Spawn:** fire-and-forget. **Owns:** an Arc clone of the
+        // notification service plus the `warning` value (moved in).
+        // **Exits:** as soon as `notify_warning` returns (one-shot).
+        // **Joined by:** nobody — we don't block `add_warning` on
+        // notification delivery, since notification failures (Teams /
+        // email transient errors) must not stall warning ingestion.
         if let Some(ref notification_service) = *self.notification_service.read() {
             let ns = notification_service.clone();
             tokio::spawn(async move {
@@ -110,7 +117,12 @@ impl WarningService {
         id
     }
 
-    /// Add a warning and return Arc<Self> for chaining
+    /// Add a warning. Returns the new warning's id.
+    ///
+    /// **`self: &Arc<Self>` is speculative here** — the body only forwards
+    /// to `add_warning(&self, …)` and doesn't use the Arc-ness of the
+    /// receiver, so a plain `&self` would do. Kept under the audit-only
+    /// pass; safe to downgrade to `&self` in a follow-up.
     pub fn warn(
         self: &Arc<Self>,
         category: WarningCategory,

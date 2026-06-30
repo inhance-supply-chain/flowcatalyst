@@ -336,7 +336,14 @@ impl EnhancedOutboxProcessor {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Start the processor with hot standby integration
+    /// Start the processor with hot standby integration.
+    ///
+    /// **Why `self: Arc<Self>`** (owned): the body spawns several
+    /// long-running tasks (leader watcher, primary loop, status reporter)
+    /// that each capture clones of internal Arc fields drawn from `self`.
+    /// Owned receiver matches the lifecycle: the caller hands the
+    /// processor over to this method, and the spawned tasks become the
+    /// new owners.
     #[cfg(feature = "standby")]
     pub async fn start_with_standby(self: Arc<Self>, leader_election: Arc<LeaderElection>) {
         if self.running.swap(true, Ordering::SeqCst) {

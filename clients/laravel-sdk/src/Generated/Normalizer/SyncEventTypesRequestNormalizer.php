@@ -27,22 +27,15 @@ class SyncEventTypesRequestNormalizer implements DenormalizerInterface, Normaliz
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
-            return new Reference($data['$ref'], $context['document-origin']);
-        }
-        if (isset($data['$recursiveRef'])) {
-            return new Reference($data['$recursiveRef'], $context['document-origin']);
-        }
         $object = new \FlowCatalyst\Generated\Model\SyncEventTypesRequest();
         if (null === $data || false === \is_array($data)) {
             return $object;
         }
-        if (\array_key_exists('applicationCode', $data) && $data['applicationCode'] !== null) {
-            $object->setApplicationCode($data['applicationCode']);
-            unset($data['applicationCode']);
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
+            return new Reference($data['$ref'], $context['document-origin']);
         }
-        elseif (\array_key_exists('applicationCode', $data) && $data['applicationCode'] === null) {
-            $object->setApplicationCode(null);
+        if (isset($data['$recursiveRef'])) {
+            return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
         if (\array_key_exists('eventTypes', $data) && $data['eventTypes'] !== null) {
             $values = [];
@@ -65,7 +58,6 @@ class SyncEventTypesRequestNormalizer implements DenormalizerInterface, Normaliz
     public function normalize(mixed $data, ?string $format = null, array $context = []): array|string|int|float|bool|\ArrayObject|null
     {
         $dataArray = [];
-        $dataArray['applicationCode'] = $data->getApplicationCode();
         $values = [];
         foreach ($data->getEventTypes() as $value) {
             $values[] = $this->normalizer->normalize($value, 'json', $context);

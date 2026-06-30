@@ -121,20 +121,35 @@ fn install(tag: &str) -> Result<()> {
     let target = self_update::get_target();
     info!(target = %target, "installing for target");
 
+    // Our release archives have a wrapping directory so that manual
+    // `tar -xzf` / "Extract All" produces a tidy `fc-dev-vX.Y.Z-<target>/`
+    // folder rather than dropping `fc-dev` directly into cwd. self_update
+    // would otherwise look for `fc-dev` at the archive root and fail.
+    //
+    // We can't use self_update's `{{ version }}` template token here:
+    // it expands to the FULL tag we pass to `target_version_tag` — for
+    // us that's `fc-dev/v0.4.2`, not `0.4.2` — producing a bogus path
+    // like `fc-dev-vfc-dev/v0.4.2-…/fc-dev`. Strip our `fc-dev/v` prefix
+    // ourselves and format the path manually. EXE_SUFFIX handles the
+    // trailing `.exe` on Windows that `{{ bin }}` would otherwise add.
+    //
+    // The format here MUST match the staging layout in
+    // `.github/workflows/release-fc-dev.yml` ("Package archive" step,
+    // `STAGE="fc-dev-v${VERSION}-${target}"`). Update both sides together.
+    let stripped_version = tag.strip_prefix(TAG_PREFIX).unwrap_or(tag);
+    let bin_path_in_archive = format!(
+        "fc-dev-v{}-{}/{}{}",
+        stripped_version,
+        target,
+        BIN_NAME,
+        std::env::consts::EXE_SUFFIX,
+    );
+
     let status = self_update::backends::github::Update::configure()
         .repo_owner(REPO_OWNER)
         .repo_name(REPO_NAME)
         .bin_name(BIN_NAME)
-        // Our release archives have a wrapping directory so that manual
-        // `tar -xzf` / "Extract All" produces a tidy `fc-dev-vX.Y.Z-<target>/`
-        // folder rather than dropping `fc-dev` directly into cwd. self_update
-        // would otherwise look for `fc-dev` at the archive root and fail
-        // with `Could not find the required path in the archive: "fc-dev"`.
-        //
-        // Template tokens `{{ version }}` and `{{ target }}` are expanded by
-        // self_update; `{{ bin }}` is the OS-suffixed binary name (so the
-        // trailing `.exe` lands correctly on Windows zip archives).
-        .bin_path_in_archive("fc-dev-v{{ version }}-{{ target }}/{{ bin }}")
+        .bin_path_in_archive(&bin_path_in_archive)
         // self_update requires the running binary's version so it can
         // print a sensible status (and skip if equal — though we already
         // gate that ourselves in run() against the prefix-filtered tag).

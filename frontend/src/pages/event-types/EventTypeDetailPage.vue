@@ -85,11 +85,13 @@ async function saveChanges() {
 	if (!eventType.value) return;
 
 	saving.value = true;
+	const id = eventType.value.id;
 	try {
-		eventType.value = await eventTypesApi.update(eventType.value.id, {
+		await eventTypesApi.update(id, {
 			name: editName.value,
 			description: editDescription.value,
 		});
+		await loadEventType(id);
 		editing.value = false;
 		toast.success("Success", "Event type updated");
 	} catch {

@@ -26,6 +26,11 @@ class SyncDefinitionsCommand extends Command
                             {--event-types : Sync only event types}
                             {--subscriptions : Sync only subscriptions}
                             {--dispatch-pools : Sync only dispatch pools}
+                            {--principals : Sync only principals}
+                            {--processes : Sync only processes}
+                            {--scheduled-jobs : Sync only scheduled jobs}
+                            {--openapi : Publish only the attached OpenAPI document}
+                            {--openapi-file= : Path to a JSON/YAML OpenAPI file to attach before sync}
                             {--remove-unlisted : Remove definitions not in local cache}
                             {--dry-run : Show what would be synced without actually syncing}';
 
@@ -57,18 +62,49 @@ class SyncDefinitionsCommand extends Command
         }
 
         // Build options from command flags
-        $syncAll = !$this->option('roles') && !$this->option('event-types') && !$this->option('subscriptions') && !$this->option('dispatch-pools');
+        $syncAll = !$this->option('roles')
+            && !$this->option('event-types')
+            && !$this->option('subscriptions')
+            && !$this->option('dispatch-pools')
+            && !$this->option('principals')
+            && !$this->option('processes')
+            && !$this->option('scheduled-jobs')
+            && !$this->option('openapi');
         $options = new SyncOptions(
             removeUnlisted: $removeUnlisted,
             syncRoles: $syncAll || $this->option('roles'),
             syncEventTypes: $syncAll || $this->option('event-types'),
             syncSubscriptions: $syncAll || $this->option('subscriptions'),
             syncDispatchPools: $syncAll || $this->option('dispatch-pools'),
+            syncPrincipals: $syncAll || $this->option('principals'),
+            syncProcesses: $syncAll || $this->option('processes'),
+            syncScheduledJobs: $syncAll || $this->option('scheduled-jobs'),
+            syncOpenapi: $syncAll || $this->option('openapi'),
         );
 
         // Build definition set from cached definitions
         $scannedData = $repository->all();
         $definitions = SyncDefinitionSet::fromScannedDefinitions($appCode, $scannedData->toArray());
+
+        // Attach an OpenAPI document when an explicit file is given
+        $openapiFile = $this->option('openapi-file');
+        if (is_string($openapiFile) && $openapiFile !== '') {
+            if (!is_file($openapiFile)) {
+                $this->error("OpenAPI file not found: {$openapiFile}");
+                return Command::FAILURE;
+            }
+            $raw = file_get_contents($openapiFile);
+            if ($raw === false) {
+                $this->error("Failed to read OpenAPI file: {$openapiFile}");
+                return Command::FAILURE;
+            }
+            $decoded = json_decode($raw, true);
+            if (!is_array($decoded)) {
+                $this->error("OpenAPI file is not valid JSON: {$openapiFile}");
+                return Command::FAILURE;
+            }
+            $definitions = $definitions->withOpenapiSpec($decoded);
+        }
 
         if ($definitions->isEmpty()) {
             $this->info('No definitions to sync.');
@@ -127,6 +163,35 @@ class SyncDefinitionsCommand extends Command
             }
             $this->newLine();
         }
+
+        if ($options->syncProcesses && $definitions->hasProcesses()) {
+            $this->info('Processes to sync:');
+            foreach ($definitions->getProcesses() as $process) {
+                $code = $process['code']
+                    ?? sprintf(
+                        '%s:%s:%s',
+                        $definitions->applicationCode,
+                        $process['subdomain'] ?? '',
+                        $process['processName'] ?? '',
+                    );
+                $this->line("  - {$code}");
+            }
+            $this->newLine();
+        }
+
+        if ($options->syncScheduledJobs && $definitions->hasScheduledJobs()) {
+            $this->info('Scheduled jobs to sync:');
+            foreach ($definitions->getScheduledJobs() as $job) {
+                $crons = implode(' | ', (array) ($job['crons'] ?? []));
+                $this->line("  - {$job['code']}  [{$crons}]");
+            }
+            $this->newLine();
+        }
+
+        if ($options->syncOpenapi && $definitions->hasOpenapiSpec()) {
+            $this->info('OpenAPI document attached — will publish on sync.');
+            $this->newLine();
+        }
     }
 
     /**
@@ -172,6 +237,33 @@ class SyncDefinitionsCommand extends Command
                     $result->dispatchPools['created'] ?? 0,
                     $result->dispatchPools['updated'] ?? 0,
                     $result->dispatchPools['deleted'] ?? 0,
+                ],
+                [
+                    'Processes',
+                    $result->processes['created'] ?? 0,
+                    $result->processes['updated'] ?? 0,
+                    $result->processes['deleted'] ?? 0,
+                ],
+                [
+                    'Principals',
+                    $result->principals['created'] ?? 0,
+                    $result->principals['updated'] ?? 0,
+                    $result->principals['deleted'] ?? 0,
+                ],
+                [
+                    'Scheduled Jobs',
+                    $result->scheduledJobs['created'] ?? 0,
+                    $result->scheduledJobs['updated'] ?? 0,
+                    $result->scheduledJobs['deleted'] ?? 0,
+                ],
+                [
+                    'OpenAPI'
+                        . (isset($result->openapi['version']) && $result->openapi['version'] !== ''
+                            ? ' (' . $result->openapi['version'] . ')'
+                            : ''),
+                    $result->openapi['created'] ?? 0,
+                    $result->openapi['updated'] ?? 0,
+                    $result->openapi['deleted'] ?? 0,
                 ],
             ]
         );

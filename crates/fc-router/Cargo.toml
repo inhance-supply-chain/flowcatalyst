@@ -16,6 +16,8 @@ tracing = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 reqwest = { workspace = true }
+url = { workspace = true }
+arc-swap = { workspace = true }
 dashmap = { workspace = true }
 indexmap = { workspace = true }
 futures = { workspace = true }

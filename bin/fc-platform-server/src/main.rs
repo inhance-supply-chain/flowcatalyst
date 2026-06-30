@@ -32,7 +32,6 @@ use tracing::info;
 
 use fc_platform::api::middleware::{AppState, AuthLayer};
 use fc_platform::repository::{CorsOriginRepository, Repositories};
-use fc_platform::seed::DevDataSeeder;
 use fc_platform::usecase::PgUnitOfWork;
 
 use fc_common::config::{env_or, env_or_parse};
@@ -77,19 +76,22 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("Platform application seeding failed: {}", e))?;
 
+    fc_platform::shared::default_processes::seed_default_processes(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Default processes seeding failed: {}", e))?;
+
+    // Create the initial platform admin if no anchor user exists yet. No-op
+    // on subsequent boots; gated on FLOWCATALYST_BOOTSTRAP_ADMIN_EMAIL +
+    // _PASSWORD env vars when first run.
+    fc_platform::shared::bootstrap_admin::bootstrap_admin_user(&pg_pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Bootstrap admin seeding failed: {}", e))?;
+
     // Referential-integrity scan — warns about orphaned junction rows.
     fc_platform::shared::integrity_scan::run(&pg_pool).await;
 
-    // Seed development data if in dev mode
-    let dev_mode = std::env::var("FC_DEV_MODE")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
-    if dev_mode {
-        let seeder = DevDataSeeder::new(pg_pool.clone());
-        if let Err(e) = seeder.seed().await {
-            tracing::warn!("Dev data seeding skipped (data may already exist): {}", e);
-        }
-    }
+    // Dev-mode auto-seeding of users/clients/applications was removed —
+    // use `fc-dev init` to bootstrap an admin + application interactively.
 
     // Initialize repositories
     let repos = Repositories::new(&pg_pool);
@@ -174,12 +176,41 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("platform application row missing after seeding"))?
         .id;
 
+    // Distributed rate-limit store (Redis when FC_REDIS_URL is reachable,
+    // Postgres fallback). Logged at startup so ops can confirm which backend
+    // is active.
+    let rate_limit_store =
+        fc_platform::shared::rate_limit_store::build_rate_limit_store(pg_pool.clone()).await;
+    let rate_limit_policies = Arc::new(
+        fc_platform::shared::rate_limit_store::RateLimitPolicies::from_env(),
+    );
+
+    // Hourly prune for the Postgres rate-limit table (no-op for Redis).
+    {
+        let store = rate_limit_store.clone();
+        let max_window = rate_limit_policies.max_window();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                match store.prune(max_window).await {
+                    Ok(n) if n > 0 => tracing::debug!(rows = n, "rate_limit_events prune"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "rate_limit_events prune failed"),
+                }
+            }
+        });
+    }
+
     // Build platform API router via shared builder (handles ~38 state structs)
     let routes = fc_platform::shared::server_setup::build_platform_routes(
         &repos,
         &auth_services,
         &unit_of_work,
         fc_platform::shared::server_setup::PlatformRoutesConfig {
+            rate_limit_store,
+            rate_limit_policies,
             session_cookie_secure: false,
             session_cookie_same_site: std::env::var("FC_SESSION_COOKIE_SAME_SITE")
                 .unwrap_or_else(|_| fc_platform::shared::server_setup::PlatformRoutesConfig::DEFAULT_SAME_SITE.to_string()),

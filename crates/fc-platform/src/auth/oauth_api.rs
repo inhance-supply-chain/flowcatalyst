@@ -43,6 +43,9 @@ pub struct AuthorizeRequest {
     pub redirect_uri: String,
     #[serde(default)]
     pub scope: Option<String>,
+    /// Required. Echoed back to the client on the callback so it can detect
+    /// CSRF-pinned authorization codes (OAuth 2.0 Security BCP §4.7). PKCE
+    /// protects the code itself; `state` protects the redirect flow.
     pub state: Option<String>,
     pub nonce: Option<String>,
     /// PKCE code challenge
@@ -182,9 +185,16 @@ pub struct OAuthState {
     /// Per-`client_id` rate limit on `/oauth/token` (composes with the
     /// per-IP middleware that wraps `/oauth/*`).
     pub client_token_rate_limit: crate::shared::rate_limit_middleware::IpRateLimiterState,
+    /// Cluster-wide rate-limit store (Redis or Postgres). Per-client_id
+    /// distributed enforcement on `/oauth/token` and `/oauth/authorize`
+    /// runs through this on top of the in-memory governor.
+    pub rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
+    /// Per-bucket policies (window + limit), loaded once from env.
+    pub rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
 }
 
 impl OAuthState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         oauth_client_repo: Arc<OAuthClientRepository>,
         principal_repo: Arc<PrincipalRepository>,
@@ -196,6 +206,8 @@ impl OAuthState {
         password_service: Arc<PasswordService>,
         login_attempt_repo: Arc<LoginAttemptRepository>,
         client_token_rate_limit: crate::shared::rate_limit_middleware::IpRateLimiterState,
+        rate_limit_store: Arc<dyn crate::shared::rate_limit_store::RateLimitStore>,
+        rate_limit_policies: Arc<crate::shared::rate_limit_store::RateLimitPolicies>,
     ) -> Self {
         Self {
             oauth_client_repo,
@@ -208,6 +220,8 @@ impl OAuthState {
             password_service,
             login_attempt_repo,
             client_token_rate_limit,
+            rate_limit_store,
+            rate_limit_policies,
         }
     }
 }
@@ -237,6 +251,39 @@ pub async fn authorize(
             "Only 'code' response type is supported",
             req.state.as_deref(),
         );
+    }
+
+    // Require `state` for CSRF protection on the callback. Missing/empty
+    // `state` is rejected with 400 (not a redirect) — we can't safely bounce
+    // the user-agent back to the caller without proving the caller is who
+    // they claim to be, and `state` is the mechanism by which they do that.
+    if req.state.as_deref().is_none_or(|s| s.trim().is_empty()) {
+        warn!(client_id = %req.client_id, "authorize rejected: missing `state` parameter");
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: Some(
+                    "`state` parameter is required for CSRF protection".to_string(),
+                ),
+            }),
+        )
+            .into_response();
+    }
+
+    // Cluster-wide per-`client_id` rate limit. Runs before the DB lookup so a
+    // client that's spamming us can't amplify load on the OAuth client cache.
+    // The per-IP layer wrapping `/oauth/*` already throttles raw volume; this
+    // catches a single client_id sprayed across many IPs.
+    if let Err(resp) = crate::shared::rate_limit_store::enforce_distributed(
+        &*state.rate_limit_store,
+        crate::shared::rate_limit_store::Bucket::OAUTH_AUTHORIZE_CLIENT,
+        &req.client_id,
+        state.rate_limit_policies.oauth_authorize_client,
+    )
+    .await
+    {
+        return resp;
     }
 
     // Validate client
@@ -736,6 +783,11 @@ pub async fn token(
     // wraps `/oauth/*` — this catches a single client running away with
     // refresh-token churn from many IPs (which the per-IP layer wouldn't
     // detect on its own).
+    //
+    // Two limiters run in series: the in-memory `governor` rejects bursts
+    // on this instance (sub-ms), then the cluster-wide store catches the
+    // same client_id when traffic is sprayed across replicas (one
+    // round-trip to Redis/Postgres).
     if let Some(ref client_id) = req.client_id {
         if let Err(retry_after) = state.client_token_rate_limit.check(client_id) {
             return (
@@ -749,6 +801,16 @@ pub async fn token(
                 }),
             )
                 .into_response();
+        }
+        if let Err(resp) = crate::shared::rate_limit_store::enforce_distributed(
+            &*state.rate_limit_store,
+            crate::shared::rate_limit_store::Bucket::OAUTH_TOKEN_CLIENT,
+            client_id,
+            state.rate_limit_policies.oauth_token_client,
+        )
+        .await
+        {
+            return resp;
         }
     }
 
@@ -1570,7 +1632,13 @@ pub async fn issue_code(
 /// Supports exact matches and wildcard patterns where `*` matches a single
 /// subdomain segment (e.g. `https://*.example.com/callback` matches
 /// `https://app.example.com/callback` but not `https://a.b.example.com/callback`).
-fn matches_redirect_uri(uri: &str, registered: &[String]) -> bool {
+///
+/// Exposed `pub(crate)` so the OIDC RP-Initiated Logout endpoint
+/// (`oidc_login_api::session_end`) can reuse the same matcher for the
+/// `post_logout_redirect_uri` whitelist check — both surfaces must apply
+/// identical rules so a value registered as a callback isn't surprisingly
+/// rejected at logout time (or vice versa).
+pub(crate) fn matches_redirect_uri(uri: &str, registered: &[String]) -> bool {
     // Exact match first
     if registered.contains(&uri.to_string()) {
         return true;

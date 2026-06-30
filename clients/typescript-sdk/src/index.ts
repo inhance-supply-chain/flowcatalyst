@@ -49,10 +49,10 @@ export {
 	type FlowCatalystConfig,
 	type ClientCredentialsConfig,
 	type UserTokenConfig,
-} from "./client";
+} from "./client.js";
 
 // Authentication
-export { OidcTokenManager, type TokenManagerConfig } from "./auth";
+export { OidcTokenManager, type TokenManagerConfig } from "./auth.js";
 
 // Error types
 export type {
@@ -64,7 +64,7 @@ export type {
 	ForbiddenError,
 	ConflictError,
 	RateLimitError,
-} from "./errors";
+} from "./errors.js";
 export {
 	authError,
 	httpError,
@@ -74,7 +74,7 @@ export {
 	conflictError,
 	rateLimitError,
 	mapHttpStatusToError,
-} from "./errors";
+} from "./errors.js";
 
 // Resource classes
 export {
@@ -88,7 +88,8 @@ export {
 	ClientsResource,
 	PrincipalsResource,
 	ScheduledJobsResource,
-} from "./resources";
+	AuditLogsResource,
+} from "./resources/index.js";
 
 // Scheduled-job runner (handler registration + lock + completion callback).
 export {
@@ -98,13 +99,43 @@ export {
 	type HandlerContext as ScheduledJobHandlerContext,
 	type RunnerOptions as ScheduledJobRunnerOptions,
 	type RunResult as ScheduledJobRunResult,
-} from "./runner/scheduled-job-runner";
+} from "./runner/scheduled-job-runner.js";
 export {
 	type LockProvider,
 	type LockHandle,
 	NoOpLockProvider,
 	InMemoryLockProvider,
-} from "./runner/lock-provider";
+} from "./runner/lock-provider.js";
+export {
+	PgLockProvider,
+	type PgLockProviderOptions,
+} from "./runner/pg-lock-provider.js";
+export {
+	RedisLockProvider,
+	type RedisLockCommandable,
+	type RedisLockProviderOptions,
+} from "./runner/redis-lock-provider.js";
+export {
+	CREATE_LOCK_TABLE_SQL,
+	initLockSchema,
+	initLockSchemaWithTable,
+} from "./runner/lock-schema.js";
+
+// Cache — pluggable key-value cache with required TTL. Three backends:
+// MemoryCacheStore (default for tests/dev), PgCacheStore (node-postgres-
+// compatible), RedisCacheStore (ioredis-compatible).
+export {
+	CacheError,
+	type CacheStore,
+	MemoryCacheStore,
+	PgCacheStore,
+	RedisCacheStore,
+	type RedisCommandable,
+	type RedisCacheStoreOptions,
+	CREATE_CACHE_TABLE_SQL,
+	initCacheSchema,
+	initCacheSchemaWithTable,
+} from "./cache/index.js";
 
 // Scheduled-job DTOs (re-exported here so consumers don't need to drill in).
 export type {
@@ -125,10 +156,10 @@ export type {
 	InstanceCompleteRequest,
 	PaginatedJobs,
 	PaginatedInstances,
-} from "./resources/scheduled-jobs";
+} from "./resources/scheduled-jobs.js";
 
 // Re-export generated types for convenience
-export type * from "./generated/types.gen";
+export type * from "./generated/types.gen.js";
 
 // Outbox - transactional outbox pattern
 export { OutboxManager, OutboxStatus } from "./outbox/index.js";
@@ -142,6 +173,12 @@ export { CreateEventDto } from "./outbox/index.js";
 export { CreateDispatchJobDto } from "./outbox/index.js";
 export { CreateAuditLogDto } from "./outbox/index.js";
 export { generateTsid, isValidTsid } from "./outbox/index.js";
+export { PgOutboxDriver } from "./outbox/index.js";
+export type {
+	PgQueryable,
+	PgPoolLike,
+	PgPoolClientLike,
+} from "./outbox/index.js";
 
 // UseCase / UnitOfWork — domain-driven write pattern with outbox dispatch.
 // Exported as a namespace to avoid clashing with neverthrow's `Result` and the

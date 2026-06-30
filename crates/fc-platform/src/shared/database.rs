@@ -365,6 +365,40 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "025_application_openapi_specs",
             include_str!("../../../../migrations/025_application_openapi_specs.sql"),
         ),
+        (
+            "026_processes",
+            include_str!("../../../../migrations/026_processes.sql"),
+        ),
+        // Wires the FK from oauth_clients.service_account_principal_id back
+        // to iam_principals (CASCADE), and deletes orphaned clients left
+        // behind by SA deletes that pre-dated this constraint. Idempotent:
+        // drops the constraint before re-adding.
+        (
+            "027_oauth_clients_service_account_fk",
+            include_str!(
+                "../../../../migrations/027_oauth_clients_service_account_fk.sql"
+            ),
+        ),
+        // Wires the FK from app_applications.service_account_id back to
+        // iam_principals (SET NULL so the application survives SA delete),
+        // and clears any dangling references so a replacement SA can be
+        // provisioned.
+        (
+            "028_application_service_account_fk",
+            include_str!(
+                "../../../../migrations/028_application_service_account_fk.sql"
+            ),
+        ),
+        (
+            "029_oauth_client_post_logout_redirect_uris",
+            include_str!(
+                "../../../../migrations/029_oauth_client_post_logout_redirect_uris.sql"
+            ),
+        ),
+        (
+            "030_rate_limit_events",
+            include_str!("../../../../migrations/030_rate_limit_events.sql"),
+        ),
     ];
 
     // No production-only migrations at the moment. Partitioning runs the
@@ -425,6 +459,32 @@ pub async fn run_migrations(pool: &PgPool, profile: MigrationProfile) -> Result<
             "025_application_openapi_specs",
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
              WHERE table_schema = 'public' AND table_name = 'app_application_openapi_specs')",
+        ),
+        // FK constraints: probe `information_schema.table_constraints` for
+        // the constraint name added in the migration's `ADD CONSTRAINT`.
+        (
+            "027_oauth_clients_service_account_fk",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.table_constraints \
+             WHERE table_schema = 'public' \
+               AND table_name = 'oauth_clients' \
+               AND constraint_name = 'oauth_clients_service_account_fk')",
+        ),
+        (
+            "028_application_service_account_fk",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.table_constraints \
+             WHERE table_schema = 'public' \
+               AND table_name = 'app_applications' \
+               AND constraint_name = 'app_applications_service_account_fk')",
+        ),
+        (
+            "029_oauth_client_post_logout_redirect_uris",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'oauth_client_post_logout_redirect_uris')",
+        ),
+        (
+            "030_rate_limit_events",
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
+             WHERE table_schema = 'public' AND table_name = 'iam_rate_limit_events')",
         ),
     ];
 

@@ -27,21 +27,21 @@ class PoolStatsResponseNormalizer implements DenormalizerInterface, NormalizerIn
     }
     public function denormalize(mixed $data, string $type, ?string $format = null, array $context = []): mixed
     {
-        if (isset($data['$ref'])) {
+        $object = new \FlowCatalyst\Generated\Model\PoolStatsResponse();
+        if (null === $data || false === \is_array($data)) {
+            return $object;
+        }
+        if (isset($data['$ref']) && !isset($data['type']) && !isset($data['properties']) && !isset($data['allOf'])) {
             return new Reference($data['$ref'], $context['document-origin']);
         }
         if (isset($data['$recursiveRef'])) {
             return new Reference($data['$recursiveRef'], $context['document-origin']);
         }
-        $object = new \FlowCatalyst\Generated\Model\PoolStatsResponse();
         if (\array_key_exists('aggregateSuccessRate', $data) && \is_int($data['aggregateSuccessRate'])) {
             $data['aggregateSuccessRate'] = (double) $data['aggregateSuccessRate'];
         }
         if (\array_key_exists('aggregateThroughputPerSec', $data) && \is_int($data['aggregateThroughputPerSec'])) {
             $data['aggregateThroughputPerSec'] = (double) $data['aggregateThroughputPerSec'];
-        }
-        if (null === $data || false === \is_array($data)) {
-            return $object;
         }
         if (\array_key_exists('aggregateSuccessRate', $data) && $data['aggregateSuccessRate'] !== null) {
             $object->setAggregateSuccessRate($data['aggregateSuccessRate']);

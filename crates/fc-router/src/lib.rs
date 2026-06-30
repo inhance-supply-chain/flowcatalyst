@@ -18,6 +18,7 @@ pub mod circuit_breaker_registry;
 pub mod config_sync;
 pub mod error;
 pub mod health;
+pub mod http_pool;
 pub mod lifecycle;
 pub mod manager;
 pub mod mediator;
@@ -38,10 +39,11 @@ pub use circuit_breaker_registry::{
     CircuitBreakerConfig, CircuitBreakerRegistry, CircuitBreakerState, CircuitBreakerStats,
 };
 pub use config_sync::{
-    spawn_config_sync_task, ConfigSyncConfig, ConfigSyncResult, ConfigSyncService,
+    spawn_config_sync_task, ConfigSyncConfig, ConfigSyncError, ConfigSyncResult, ConfigSyncService,
 };
 pub use error::RouterError;
 pub use health::{HealthService, HealthServiceConfig};
+pub use http_pool::{HostConnectionPool, HostKey, HostKeyError, HostPoolRegistry, HostPoolSizing};
 pub use lifecycle::{LifecycleConfig, LifecycleManager};
 pub use manager::{ConsumerFactory, InFlightMessageInfo, QueueManager};
 pub use mediator::{HttpMediator, HttpMediatorConfig, HttpVersion, Mediator};
@@ -65,7 +67,7 @@ pub use traffic::{AlbTrafficConfig, AwsAlbTrafficStrategy};
 pub use warning::{WarningService, WarningServiceConfig};
 
 // Re-export QueueMetrics for API
-pub use api::{spawn_broker_stats_refresh, CachedBrokerStats};
+pub use api::CachedBrokerStats;
 pub use fc_queue::QueueMetrics;
 
 pub type Result<T> = std::result::Result<T, RouterError>;

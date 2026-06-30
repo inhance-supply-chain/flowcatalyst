@@ -102,5 +102,14 @@ foreach ($json['paths'] as $path => &$methods) {
 }
 unset($methods);
 
+// The content has been downgraded to OpenAPI 3.0 conventions above, but
+// utoipa still declares "openapi": "3.1.0" at the top. jane-openapi reads
+// that string to gate parsing — set it to 3.0.3 so the generator accepts
+// the processed spec.
+if (isset($json['openapi']) && str_starts_with((string) $json['openapi'], '3.1')) {
+    $json['openapi'] = '3.0.3';
+    $fixed++;
+}
+
 file_put_contents($outputFile, json_encode($json, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 echo "Processed OpenAPI spec: {$fixed} fixes applied. Output: {$outputFile}\n";

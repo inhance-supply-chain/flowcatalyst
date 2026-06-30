@@ -20,19 +20,37 @@ use Illuminate\Support\Facades\Facade;
 class FlowCatalystAuth extends Facade
 {
     /**
-     * Get the current FlowCatalyst user from the session.
+     * Get the current FlowCatalyst user.
+     *
+     * Prefers a request-attached principal set by the `fc.auth` middleware
+     * (which handles both Bearer and session). Falls back to the legacy
+     * session-only lookup so apps that haven't wired the middleware yet
+     * keep working.
      */
     public static function user(): ?FlowCatalystUser
     {
+        if (function_exists('app')) {
+            try {
+                $request = app('request');
+                if ($request instanceof \Illuminate\Http\Request) {
+                    $attached = $request->attributes->get('fc.principal');
+                    if ($attached instanceof FlowCatalystUser) {
+                        return $attached;
+                    }
+                }
+            } catch (\Throwable) {
+                // app container not booted — fall through.
+            }
+        }
         return DefaultOidcUserHandler::getCurrentUser();
     }
 
     /**
-     * Check if a FlowCatalyst user is authenticated.
+     * Check if a FlowCatalyst user is authenticated (session OR Bearer).
      */
     public static function check(): bool
     {
-        return DefaultOidcUserHandler::isAuthenticated();
+        return self::user() !== null;
     }
 
     /**

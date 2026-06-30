@@ -77,7 +77,14 @@ impl LeaderElection {
         self.status_rx.clone()
     }
 
-    /// Start the leader election process
+    /// Start the leader election process.
+    ///
+    /// **Why `self: Arc<Self>`** (owned): the body spawns a long-running
+    /// election task that clones `self` into its closure
+    /// (`let election = self.clone(); tokio::spawn(async move { … })`).
+    /// Taking an owned Arc means the call site relinquishes its
+    /// reference; the spawned task becomes the new owner and stays alive
+    /// until the shutdown signal fires.
     pub async fn start(self: Arc<Self>) -> Result<()> {
         if self.running.swap(true, Ordering::SeqCst) {
             return Err(StandbyError::AlreadyRunning);

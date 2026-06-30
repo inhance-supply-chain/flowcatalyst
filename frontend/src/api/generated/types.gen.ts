@@ -290,9 +290,22 @@ export type BatchCreateResponse = {
  */
 export type CheckEmailDomainResponse = {
     /**
+     * When the user must pick a client, this is the allow-list to choose
+     * from. Empty when `requiresClientId` is false (no input needed) OR
+     * when there is no per-domain restriction (any active client is valid —
+     * the UI shows the full list it already fetches).
+     */
+    allowedClientIds: Array<string>;
+    /**
      * Auth provider if configured (INTERNAL, OIDC)
      */
     authProvider?: string | null;
+    /**
+     * Scope the user will be created with (ANCHOR / PARTNER / CLIENT).
+     * Derived from anchor domains + email_domain_mappings; unmapped domains
+     * default to CLIENT.
+     */
+    derivedScope: string;
     /**
      * The domain that was checked
      */
@@ -313,6 +326,11 @@ export type CheckEmailDomainResponse = {
      * Whether this is an anchor domain
      */
     isAnchorDomain: boolean;
+    /**
+     * True when the create-user form must supply a `clientId`. False for
+     * anchor domains and for mappings that already pin a primary client.
+     */
+    requiresClientId: boolean;
     /**
      * Warning message
      */
@@ -713,6 +731,10 @@ export type CreateOAuthClientRequest = {
      */
     pkceRequired?: boolean | null;
     /**
+     * Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+     */
+    postLogoutRedirectUris?: Array<string>;
+    /**
      * Allowed redirect URIs
      */
     redirectUris?: Array<string>;
@@ -731,6 +753,24 @@ export type CreateOAuthClientResponse = {
      * only the encrypted form and cannot return it again.
      */
     clientSecret?: string | null;
+};
+
+export type CreateProcessRequest = {
+    /**
+     * Diagram body (typically Mermaid source).
+     */
+    body?: string;
+    /**
+     * Process code: {application}:{subdomain}:{process-name}
+     */
+    code: string;
+    description?: string | null;
+    /**
+     * Defaults to `mermaid` if unset.
+     */
+    diagramType?: string | null;
+    name: string;
+    tags?: Array<string>;
 };
 
 /**
@@ -1458,6 +1498,7 @@ export type OAuthClientResponse = {
     grantTypes: Array<string>;
     id: string;
     pkceRequired: boolean;
+    postLogoutRedirectUris?: Array<string>;
     redirectUris: Array<string>;
     serviceAccountPrincipalId?: string | null;
     updatedAt: string;
@@ -1628,6 +1669,27 @@ export type PrincipalResponse = {
     roles: Array<string>;
     scope: string;
     type: string;
+    updatedAt: string;
+};
+
+export type ProcessListResponse = {
+    items: Array<ProcessResponse>;
+};
+
+export type ProcessResponse = {
+    application: string;
+    body: string;
+    code: string;
+    createdAt: string;
+    description?: string | null;
+    diagramType: string;
+    id: string;
+    name: string;
+    processName: string;
+    source: string;
+    status: string;
+    subdomain: string;
+    tags: Array<string>;
     updatedAt: string;
 };
 
@@ -1982,6 +2044,27 @@ export type SuccessResponse = {
 };
 
 /**
+ * A single dispatch pool input for sync
+ */
+export type SyncDispatchPoolInputRequest = {
+    code: string;
+    concurrency?: number;
+    description?: string | null;
+    name: string;
+    /**
+     * Optional. `None` / omitted = concurrency-only (no rate limit).
+     */
+    rateLimit?: number | null;
+};
+
+/**
+ * Sync dispatch pools request body
+ */
+export type SyncDispatchPoolsRequest = {
+    pools: Array<SyncDispatchPoolInputRequest>;
+};
+
+/**
  * A single event type input for sync
  */
 export type SyncEventTypeInputRequest = {
@@ -1994,26 +2077,146 @@ export type SyncEventTypeInputRequest = {
 };
 
 /**
- * Sync event types request (admin)
+ * Sync event types request body
  */
 export type SyncEventTypesRequest = {
-    /**
-     * Application code
-     */
-    applicationCode: string;
-    /**
-     * Event types to sync
-     */
     eventTypes: Array<SyncEventTypeInputRequest>;
 };
 
 /**
- * Sync result response
+ * Request body for syncing an application's OpenAPI document.
+ * The spec is accepted as a raw JSON value; the platform reads `info.version`
+ * to track versions and computes a diff against the prior CURRENT to populate
+ * human-readable change notes.
+ */
+export type SyncOpenApiSpecRequest = {
+    /**
+     * The OpenAPI document (OpenAPI 3.x or Swagger 2.x).
+     */
+    spec: unknown;
+};
+
+export type SyncOpenApiSpecResponse = {
+    applicationCode: string;
+    archivedPriorVersion?: string | null;
+    hasBreaking: boolean;
+    specId: string;
+    status: string;
+    unchanged: boolean;
+    version: string;
+};
+
+/**
+ * A single principal input for sync
+ */
+export type SyncPrincipalInputRequest = {
+    /**
+     * Whether the user is active (default: true)
+     */
+    active?: boolean;
+    /**
+     * User's email address (unique identifier for matching)
+     */
+    email: string;
+    /**
+     * Display name
+     */
+    name: string;
+    /**
+     * Role short names to assign (prefixed with applicationCode)
+     */
+    roles?: Array<string>;
+};
+
+/**
+ * Sync principals request body
+ */
+export type SyncPrincipalsRequest = {
+    principals: Array<SyncPrincipalInputRequest>;
+};
+
+/**
+ * A single process input for sync
+ */
+export type SyncProcessInputRequest = {
+    /**
+     * Diagram body (typically Mermaid source).
+     */
+    body?: string;
+    /**
+     * Full code (application:subdomain:process-name)
+     */
+    code: string;
+    description?: string | null;
+    diagramType?: string | null;
+    name: string;
+    tags?: Array<string>;
+};
+
+/**
+ * Sync processes request body
+ */
+export type SyncProcessesRequest = {
+    processes: Array<SyncProcessInputRequest>;
+};
+
+/**
+ * Sync result response (shared across all sync endpoints)
  */
 export type SyncResultResponse = {
+    applicationCode: string;
     created: number;
     deleted: number;
+    syncedCodes: Array<string>;
     updated: number;
+};
+
+/**
+ * A single role input for sync
+ */
+export type SyncRoleInputRequest = {
+    clientManaged?: boolean;
+    description?: string | null;
+    displayName?: string | null;
+    name: string;
+    permissions?: Array<string>;
+};
+
+/**
+ * Sync roles request body
+ */
+export type SyncRolesRequest = {
+    roles: Array<SyncRoleInputRequest>;
+};
+
+export type SyncScheduledJobInputRequest = {
+    code: string;
+    concurrent?: boolean;
+    crons: Array<string>;
+    deliveryMaxAttempts?: number;
+    description?: string | null;
+    name: string;
+    payload?: unknown;
+    targetUrl?: string | null;
+    timeoutSeconds?: number | null;
+    timezone?: string;
+    tracksCompletion?: boolean;
+};
+
+export type SyncScheduledJobsRequest = {
+    archiveUnlisted?: boolean;
+    /**
+     * None = sync platform-scoped jobs (anchor only).
+     */
+    clientId?: string | null;
+    jobs: Array<SyncScheduledJobInputRequest>;
+};
+
+export type SyncScheduledJobsResultResponse = {
+    applicationCode: string;
+    archived: Array<string>;
+    created: Array<string>;
+    updated: Array<string>;
 };
 
 /**
@@ -2042,16 +2245,9 @@ export type SyncSubscriptionInputRequest = {
 };
 
 /**
- * Sync subscriptions request (admin)
+ * Sync subscriptions request body
  */
 export type SyncSubscriptionsRequest = {
-    /**
-     * Application code
-     */
-    applicationCode: string;
-    /**
-     * Subscriptions to sync
-     */
     subscriptions: Array<SyncSubscriptionInputRequest>;
 };
 
@@ -2150,6 +2346,10 @@ export type UpdateOAuthClientRequest = {
      */
     pkceRequired?: boolean | null;
     /**
+     * Allowed post-logout redirect URIs (OIDC RP-Initiated Logout)
+     */
+    postLogoutRedirectUris?: Array<string> | null;
+    /**
      * Allowed redirect URIs
      */
     redirectUris?: Array<string> | null;
@@ -2184,6 +2384,14 @@ export type UpdatePrincipalRequest = {
      * User scope (ANCHOR / PARTNER / CLIENT). Changing scope requires anchor.
      */
     scope?: string | null;
+};
+
+export type UpdateProcessRequest = {
+    body?: string | null;
+    description?: string | null;
+    diagramType?: string | null;
+    name?: string | null;
+    tags?: Array<string> | null;
 };
 
 /**
@@ -2289,7 +2497,285 @@ export type WindowedMetrics = {
     windowStart: string;
 };
 
-export type GetApiAdminAuditLogsData = {
+export type PostApiApplicationsByAppCodeDispatchPoolsSyncData = {
+    body: SyncDispatchPoolsRequest;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: {
+        /**
+         * Archive pools not in list
+         */
+        removeUnlisted?: boolean;
+    };
+    url: '/api/applications/{appCode}/dispatch-pools/sync';
+};
+
+export type PostApiApplicationsByAppCodeDispatchPoolsSyncErrors = {
+    /**
+     * Validation error
+     */
+    400: unknown;
+};
+
+export type PostApiApplicationsByAppCodeDispatchPoolsSyncResponses = {
+    /**
+     * Dispatch pools synced
+     */
+    200: SyncResultResponse;
+};
+
+export type PostApiApplicationsByAppCodeDispatchPoolsSyncResponse = PostApiApplicationsByAppCodeDispatchPoolsSyncResponses[keyof PostApiApplicationsByAppCodeDispatchPoolsSyncResponses];
+
+export type PostApiApplicationsByAppCodeEventTypesSyncData = {
+    body: SyncEventTypesRequest;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: {
+        /**
+         * Remove API-sourced event types not in list
+         */
+        removeUnlisted?: boolean;
+    };
+    url: '/api/applications/{appCode}/event-types/sync';
+};
+
+export type PostApiApplicationsByAppCodeEventTypesSyncErrors = {
+    /**
+     * Validation error
+     */
+    400: unknown;
+};
+
+export type PostApiApplicationsByAppCodeEventTypesSyncResponses = {
+    /**
+     * Event types synced
+     */
+    200: SyncResultResponse;
+};
+
+export type PostApiApplicationsByAppCodeEventTypesSyncResponse = PostApiApplicationsByAppCodeEventTypesSyncResponses[keyof PostApiApplicationsByAppCodeEventTypesSyncResponses];
+
+export type PostApiApplicationsByAppCodeOpenapiSyncData = {
+    body: SyncOpenApiSpecRequest;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: never;
+    url: '/api/applications/{appCode}/openapi/sync';
+};
+
+export type PostApiApplicationsByAppCodeOpenapiSyncErrors = {
+    /**
+     * Validation error
+     */
+    400: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+    /**
+     * Application not found
+     */
+    404: unknown;
+};
+
+export type PostApiApplicationsByAppCodeOpenapiSyncResponses = {
+    /**
+     * OpenAPI spec synced
+     */
+    200: SyncOpenApiSpecResponse;
+};
+
+export type PostApiApplicationsByAppCodeOpenapiSyncResponse = PostApiApplicationsByAppCodeOpenapiSyncResponses[keyof PostApiApplicationsByAppCodeOpenapiSyncResponses];
+
+export type PostApiApplicationsByAppCodePrincipalsSyncData = {
+    body: SyncPrincipalsRequest;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: {
+        /**
+         * Remove SDK_SYNC roles from unlisted principals
+         */
+        removeUnlisted?: boolean;
+    };
+    url: '/api/applications/{appCode}/principals/sync';
+};
+
+export type PostApiApplicationsByAppCodePrincipalsSyncErrors = {
+    /**
+     * Validation error
+     */
+    400: unknown;
+    /**
+     * Application not found
+     */
+    404: unknown;
+};
+
+export type PostApiApplicationsByAppCodePrincipalsSyncResponses = {
+    /**
+     * Principals synced
+     */
+    200: SyncResultResponse;
+};
+
+export type PostApiApplicationsByAppCodePrincipalsSyncResponse = PostApiApplicationsByAppCodePrincipalsSyncResponses[keyof PostApiApplicationsByAppCodePrincipalsSyncResponses];
+
+export type PostApiApplicationsByAppCodeProcessesSyncData = {
+    body: SyncProcessesRequest;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: {
+        /**
+         * Remove API-sourced processes not in list
+         */
+        removeUnlisted?: boolean;
+    };
+    url: '/api/applications/{appCode}/processes/sync';
+};
+
+export type PostApiApplicationsByAppCodeProcessesSyncErrors = {
+    /**
+     * Validation error
+     */
+    400: unknown;
+};
+
+export type PostApiApplicationsByAppCodeProcessesSyncResponses = {
+    /**
+     * Processes synced
+     */
+    200: SyncResultResponse;
+};
+
+export type PostApiApplicationsByAppCodeProcessesSyncResponse = PostApiApplicationsByAppCodeProcessesSyncResponses[keyof PostApiApplicationsByAppCodeProcessesSyncResponses];
+
+export type PostApiApplicationsByAppCodeRolesSyncData = {
+    body: SyncRolesRequest;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: {
+        /**
+         * Remove SDK roles not in list
+         */
+        removeUnlisted?: boolean;
+    };
+    url: '/api/applications/{appCode}/roles/sync';
+};
+
+export type PostApiApplicationsByAppCodeRolesSyncErrors = {
+    /**
+     * Validation error
+     */
+    400: unknown;
+    /**
+     * Application not found
+     */
+    404: unknown;
+};
+
+export type PostApiApplicationsByAppCodeRolesSyncResponses = {
+    /**
+     * Roles synced
+     */
+    200: SyncResultResponse;
+};
+
+export type PostApiApplicationsByAppCodeRolesSyncResponse = PostApiApplicationsByAppCodeRolesSyncResponses[keyof PostApiApplicationsByAppCodeRolesSyncResponses];
+
+export type PostApiApplicationsByAppCodeScheduledJobsSyncData = {
+    body: SyncScheduledJobsRequest;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: never;
+    url: '/api/applications/{appCode}/scheduled-jobs/sync';
+};
+
+export type PostApiApplicationsByAppCodeScheduledJobsSyncErrors = {
+    /**
+     * Validation error
+     */
+    400: unknown;
+    /**
+     * Forbidden
+     */
+    403: unknown;
+};
+
+export type PostApiApplicationsByAppCodeScheduledJobsSyncResponses = {
+    /**
+     * Scheduled jobs synced
+     */
+    200: SyncScheduledJobsResultResponse;
+};
+
+export type PostApiApplicationsByAppCodeScheduledJobsSyncResponse = PostApiApplicationsByAppCodeScheduledJobsSyncResponses[keyof PostApiApplicationsByAppCodeScheduledJobsSyncResponses];
+
+export type PostApiApplicationsByAppCodeSubscriptionsSyncData = {
+    body: SyncSubscriptionsRequest;
+    path: {
+        /**
+         * Application code
+         */
+        appCode: string;
+    };
+    query?: {
+        /**
+         * Remove API-sourced subscriptions not in list
+         */
+        removeUnlisted?: boolean;
+    };
+    url: '/api/applications/{appCode}/subscriptions/sync';
+};
+
+export type PostApiApplicationsByAppCodeSubscriptionsSyncErrors = {
+    /**
+     * Validation error
+     */
+    400: unknown;
+    /**
+     * Connection not found
+     */
+    404: unknown;
+};
+
+export type PostApiApplicationsByAppCodeSubscriptionsSyncResponses = {
+    /**
+     * Subscriptions synced
+     */
+    200: SyncResultResponse;
+};
+
+export type PostApiApplicationsByAppCodeSubscriptionsSyncResponse = PostApiApplicationsByAppCodeSubscriptionsSyncResponses[keyof PostApiApplicationsByAppCodeSubscriptionsSyncResponses];
+
+export type GetApiAuditLogsData = {
     body?: never;
     path?: never;
     query?: {
@@ -2322,142 +2808,142 @@ export type GetApiAdminAuditLogsData = {
     url: '/api/audit-logs';
 };
 
-export type GetApiAdminAuditLogsResponses = {
+export type GetApiAuditLogsResponses = {
     /**
      * List of audit logs
      */
     200: AuditLogListResponse;
 };
 
-export type GetApiAdminAuditLogsResponse = GetApiAdminAuditLogsResponses[keyof GetApiAdminAuditLogsResponses];
+export type GetApiAuditLogsResponse = GetApiAuditLogsResponses[keyof GetApiAuditLogsResponses];
 
-export type GetApiAdminAuditLogsApplicationIdsData = {
+export type GetApiAuditLogsApplicationIdsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/audit-logs/application-ids';
 };
 
-export type GetApiAdminAuditLogsApplicationIdsResponses = {
+export type GetApiAuditLogsApplicationIdsResponses = {
     /**
      * List of distinct application IDs
      */
     200: ApplicationIdsResponse;
 };
 
-export type GetApiAdminAuditLogsApplicationIdsResponse = GetApiAdminAuditLogsApplicationIdsResponses[keyof GetApiAdminAuditLogsApplicationIdsResponses];
+export type GetApiAuditLogsApplicationIdsResponse = GetApiAuditLogsApplicationIdsResponses[keyof GetApiAuditLogsApplicationIdsResponses];
 
-export type GetApiAdminAuditLogsClientIdsData = {
+export type GetApiAuditLogsClientIdsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/audit-logs/client-ids';
 };
 
-export type GetApiAdminAuditLogsClientIdsResponses = {
+export type GetApiAuditLogsClientIdsResponses = {
     /**
      * List of distinct client IDs
      */
     200: ClientIdsResponse;
 };
 
-export type GetApiAdminAuditLogsClientIdsResponse = GetApiAdminAuditLogsClientIdsResponses[keyof GetApiAdminAuditLogsClientIdsResponses];
+export type GetApiAuditLogsClientIdsResponse = GetApiAuditLogsClientIdsResponses[keyof GetApiAuditLogsClientIdsResponses];
 
-export type GetApiAdminAuditLogsEntityTypesData = {
+export type GetApiAuditLogsEntityTypesData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/audit-logs/entity-types';
 };
 
-export type GetApiAdminAuditLogsEntityTypesResponses = {
+export type GetApiAuditLogsEntityTypesResponses = {
     /**
      * List of distinct entity types
      */
     200: EntityTypesResponse;
 };
 
-export type GetApiAdminAuditLogsEntityTypesResponse = GetApiAdminAuditLogsEntityTypesResponses[keyof GetApiAdminAuditLogsEntityTypesResponses];
+export type GetApiAuditLogsEntityTypesResponse = GetApiAuditLogsEntityTypesResponses[keyof GetApiAuditLogsEntityTypesResponses];
 
-export type GetApiAdminAuditLogsEntityByEntityTypeByEntityIdData = {
+export type GetApiAuditLogsEntityByEntityTypeByEntityIdData = {
     body?: never;
     path: {
         /**
          * Entity type
          */
-        entity_type: string;
+        entityType: string;
         /**
          * Entity ID
          */
-        entity_id: string;
+        entityId: string;
     };
     query?: never;
-    url: '/api/audit-logs/entity/{entity_type}/{entity_id}';
+    url: '/api/audit-logs/entity/{entityType}/{entityId}';
 };
 
-export type GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponses = {
+export type GetApiAuditLogsEntityByEntityTypeByEntityIdResponses = {
     /**
      * Audit logs for entity
      */
     200: EntityAuditLogsResponse;
 };
 
-export type GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponse = GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponses[keyof GetApiAdminAuditLogsEntityByEntityTypeByEntityIdResponses];
+export type GetApiAuditLogsEntityByEntityTypeByEntityIdResponse = GetApiAuditLogsEntityByEntityTypeByEntityIdResponses[keyof GetApiAuditLogsEntityByEntityTypeByEntityIdResponses];
 
-export type GetApiAdminAuditLogsOperationsData = {
+export type GetApiAuditLogsOperationsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/audit-logs/operations';
 };
 
-export type GetApiAdminAuditLogsOperationsResponses = {
+export type GetApiAuditLogsOperationsResponses = {
     /**
      * List of distinct operations
      */
     200: OperationsResponse;
 };
 
-export type GetApiAdminAuditLogsOperationsResponse = GetApiAdminAuditLogsOperationsResponses[keyof GetApiAdminAuditLogsOperationsResponses];
+export type GetApiAuditLogsOperationsResponse = GetApiAuditLogsOperationsResponses[keyof GetApiAuditLogsOperationsResponses];
 
-export type GetApiAdminAuditLogsPrincipalByPrincipalIdData = {
+export type GetApiAuditLogsPrincipalByPrincipalIdData = {
     body?: never;
     path: {
         /**
          * Principal ID
          */
-        principal_id: string;
+        principalId: string;
     };
     query?: never;
-    url: '/api/audit-logs/principal/{principal_id}';
+    url: '/api/audit-logs/principal/{principalId}';
 };
 
-export type GetApiAdminAuditLogsPrincipalByPrincipalIdResponses = {
+export type GetApiAuditLogsPrincipalByPrincipalIdResponses = {
     /**
      * Audit logs for principal
      */
     200: Array<AuditLogResponse>;
 };
 
-export type GetApiAdminAuditLogsPrincipalByPrincipalIdResponse = GetApiAdminAuditLogsPrincipalByPrincipalIdResponses[keyof GetApiAdminAuditLogsPrincipalByPrincipalIdResponses];
+export type GetApiAuditLogsPrincipalByPrincipalIdResponse = GetApiAuditLogsPrincipalByPrincipalIdResponses[keyof GetApiAuditLogsPrincipalByPrincipalIdResponses];
 
-export type GetApiAdminAuditLogsRecentData = {
+export type GetApiAuditLogsRecentData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/audit-logs/recent';
 };
 
-export type GetApiAdminAuditLogsRecentResponses = {
+export type GetApiAuditLogsRecentResponses = {
     /**
      * Recent audit logs
      */
     200: Array<AuditLogResponse>;
 };
 
-export type GetApiAdminAuditLogsRecentResponse = GetApiAdminAuditLogsRecentResponses[keyof GetApiAdminAuditLogsRecentResponses];
+export type GetApiAuditLogsRecentResponse = GetApiAuditLogsRecentResponses[keyof GetApiAuditLogsRecentResponses];
 
-export type GetApiAdminAuditLogsByIdData = {
+export type GetApiAuditLogsByIdData = {
     body?: never;
     path: {
         /**
@@ -2469,23 +2955,23 @@ export type GetApiAdminAuditLogsByIdData = {
     url: '/api/audit-logs/{id}';
 };
 
-export type GetApiAdminAuditLogsByIdErrors = {
+export type GetApiAuditLogsByIdErrors = {
     /**
      * Audit log not found
      */
     404: unknown;
 };
 
-export type GetApiAdminAuditLogsByIdResponses = {
+export type GetApiAuditLogsByIdResponses = {
     /**
      * Audit log found
      */
     200: AuditLogDetailResponse;
 };
 
-export type GetApiAdminAuditLogsByIdResponse = GetApiAdminAuditLogsByIdResponses[keyof GetApiAdminAuditLogsByIdResponses];
+export type GetApiAuditLogsByIdResponse = GetApiAuditLogsByIdResponses[keyof GetApiAuditLogsByIdResponses];
 
-export type GetApiAdminClientsData = {
+export type GetApiClientsData = {
     body?: never;
     path?: never;
     query?: {
@@ -2505,23 +2991,23 @@ export type GetApiAdminClientsData = {
     url: '/api/clients';
 };
 
-export type GetApiAdminClientsResponses = {
+export type GetApiClientsResponses = {
     /**
      * List of clients
      */
     200: ClientListResponse;
 };
 
-export type GetApiAdminClientsResponse = GetApiAdminClientsResponses[keyof GetApiAdminClientsResponses];
+export type GetApiClientsResponse = GetApiClientsResponses[keyof GetApiClientsResponses];
 
-export type PostApiAdminClientsData = {
+export type PostApiClientsData = {
     body: CreateClientRequest;
     path?: never;
     query?: never;
     url: '/api/clients';
 };
 
-export type PostApiAdminClientsErrors = {
+export type PostApiClientsErrors = {
     /**
      * Validation error
      */
@@ -2532,16 +3018,16 @@ export type PostApiAdminClientsErrors = {
     409: unknown;
 };
 
-export type PostApiAdminClientsResponses = {
+export type PostApiClientsResponses = {
     /**
      * Client created
      */
     201: CreatedResponse;
 };
 
-export type PostApiAdminClientsResponse = PostApiAdminClientsResponses[keyof PostApiAdminClientsResponses];
+export type PostApiClientsResponse = PostApiClientsResponses[keyof PostApiClientsResponses];
 
-export type GetApiAdminClientsByIdentifierByIdentifierData = {
+export type GetApiClientsByIdentifierByIdentifierData = {
     body?: never;
     path: {
         /**
@@ -2553,23 +3039,23 @@ export type GetApiAdminClientsByIdentifierByIdentifierData = {
     url: '/api/clients/by-identifier/{identifier}';
 };
 
-export type GetApiAdminClientsByIdentifierByIdentifierErrors = {
+export type GetApiClientsByIdentifierByIdentifierErrors = {
     /**
      * Client not found
      */
     404: unknown;
 };
 
-export type GetApiAdminClientsByIdentifierByIdentifierResponses = {
+export type GetApiClientsByIdentifierByIdentifierResponses = {
     /**
      * Client found
      */
     200: ClientResponse;
 };
 
-export type GetApiAdminClientsByIdentifierByIdentifierResponse = GetApiAdminClientsByIdentifierByIdentifierResponses[keyof GetApiAdminClientsByIdentifierByIdentifierResponses];
+export type GetApiClientsByIdentifierByIdentifierResponse = GetApiClientsByIdentifierByIdentifierResponses[keyof GetApiClientsByIdentifierByIdentifierResponses];
 
-export type GetApiAdminClientsSearchData = {
+export type GetApiClientsSearchData = {
     body?: never;
     path?: never;
     query?: {
@@ -2581,16 +3067,16 @@ export type GetApiAdminClientsSearchData = {
     url: '/api/clients/search';
 };
 
-export type GetApiAdminClientsSearchResponses = {
+export type GetApiClientsSearchResponses = {
     /**
      * Search results
      */
     200: ClientListResponse;
 };
 
-export type GetApiAdminClientsSearchResponse = GetApiAdminClientsSearchResponses[keyof GetApiAdminClientsSearchResponses];
+export type GetApiClientsSearchResponse = GetApiClientsSearchResponses[keyof GetApiClientsSearchResponses];
 
-export type DeleteApiAdminClientsByIdData = {
+export type DeleteApiClientsByIdData = {
     body?: never;
     path: {
         /**
@@ -2602,23 +3088,23 @@ export type DeleteApiAdminClientsByIdData = {
     url: '/api/clients/{id}';
 };
 
-export type DeleteApiAdminClientsByIdErrors = {
+export type DeleteApiClientsByIdErrors = {
     /**
      * Client not found
      */
     404: unknown;
 };
 
-export type DeleteApiAdminClientsByIdResponses = {
+export type DeleteApiClientsByIdResponses = {
     /**
      * Client deleted
      */
     204: void;
 };
 
-export type DeleteApiAdminClientsByIdResponse = DeleteApiAdminClientsByIdResponses[keyof DeleteApiAdminClientsByIdResponses];
+export type DeleteApiClientsByIdResponse = DeleteApiClientsByIdResponses[keyof DeleteApiClientsByIdResponses];
 
-export type GetApiAdminClientsByIdData = {
+export type GetApiClientsByIdData = {
     body?: never;
     path: {
         /**
@@ -2630,23 +3116,23 @@ export type GetApiAdminClientsByIdData = {
     url: '/api/clients/{id}';
 };
 
-export type GetApiAdminClientsByIdErrors = {
+export type GetApiClientsByIdErrors = {
     /**
      * Client not found
      */
     404: unknown;
 };
 
-export type GetApiAdminClientsByIdResponses = {
+export type GetApiClientsByIdResponses = {
     /**
      * Client found
      */
     200: ClientResponse;
 };
 
-export type GetApiAdminClientsByIdResponse = GetApiAdminClientsByIdResponses[keyof GetApiAdminClientsByIdResponses];
+export type GetApiClientsByIdResponse = GetApiClientsByIdResponses[keyof GetApiClientsByIdResponses];
 
-export type PutApiAdminClientsByIdData = {
+export type PutApiClientsByIdData = {
     body: UpdateClientRequest;
     path: {
         /**
@@ -2658,23 +3144,23 @@ export type PutApiAdminClientsByIdData = {
     url: '/api/clients/{id}';
 };
 
-export type PutApiAdminClientsByIdErrors = {
+export type PutApiClientsByIdErrors = {
     /**
      * Client not found
      */
     404: unknown;
 };
 
-export type PutApiAdminClientsByIdResponses = {
+export type PutApiClientsByIdResponses = {
     /**
      * Client updated
      */
     204: void;
 };
 
-export type PutApiAdminClientsByIdResponse = PutApiAdminClientsByIdResponses[keyof PutApiAdminClientsByIdResponses];
+export type PutApiClientsByIdResponse = PutApiClientsByIdResponses[keyof PutApiClientsByIdResponses];
 
-export type PostApiAdminClientsByIdActivateData = {
+export type PostApiClientsByIdActivateData = {
     body?: never;
     path: {
         /**
@@ -2686,7 +3172,7 @@ export type PostApiAdminClientsByIdActivateData = {
     url: '/api/clients/{id}/activate';
 };
 
-export type PostApiAdminClientsByIdActivateErrors = {
+export type PostApiClientsByIdActivateErrors = {
     /**
      * Insufficient permissions
      */
@@ -2697,16 +3183,16 @@ export type PostApiAdminClientsByIdActivateErrors = {
     404: unknown;
 };
 
-export type PostApiAdminClientsByIdActivateResponses = {
+export type PostApiClientsByIdActivateResponses = {
     /**
      * Client activated
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiAdminClientsByIdActivateResponse = PostApiAdminClientsByIdActivateResponses[keyof PostApiAdminClientsByIdActivateResponses];
+export type PostApiClientsByIdActivateResponse = PostApiClientsByIdActivateResponses[keyof PostApiClientsByIdActivateResponses];
 
-export type GetApiAdminClientsByIdApplicationsData = {
+export type GetApiClientsByIdApplicationsData = {
     body?: never;
     path: {
         /**
@@ -2718,23 +3204,23 @@ export type GetApiAdminClientsByIdApplicationsData = {
     url: '/api/clients/{id}/applications';
 };
 
-export type GetApiAdminClientsByIdApplicationsErrors = {
+export type GetApiClientsByIdApplicationsErrors = {
     /**
      * Client not found
      */
     404: unknown;
 };
 
-export type GetApiAdminClientsByIdApplicationsResponses = {
+export type GetApiClientsByIdApplicationsResponses = {
     /**
      * Client applications
      */
     200: ClientApplicationsResponse;
 };
 
-export type GetApiAdminClientsByIdApplicationsResponse = GetApiAdminClientsByIdApplicationsResponses[keyof GetApiAdminClientsByIdApplicationsResponses];
+export type GetApiClientsByIdApplicationsResponse = GetApiClientsByIdApplicationsResponses[keyof GetApiClientsByIdApplicationsResponses];
 
-export type PutApiAdminClientsByIdApplicationsData = {
+export type PutApiClientsByIdApplicationsData = {
     body: UpdateClientApplicationsRequest;
     path: {
         /**
@@ -2746,23 +3232,23 @@ export type PutApiAdminClientsByIdApplicationsData = {
     url: '/api/clients/{id}/applications';
 };
 
-export type PutApiAdminClientsByIdApplicationsErrors = {
+export type PutApiClientsByIdApplicationsErrors = {
     /**
      * Client not found
      */
     404: unknown;
 };
 
-export type PutApiAdminClientsByIdApplicationsResponses = {
+export type PutApiClientsByIdApplicationsResponses = {
     /**
      * Applications updated
      */
     204: void;
 };
 
-export type PutApiAdminClientsByIdApplicationsResponse = PutApiAdminClientsByIdApplicationsResponses[keyof PutApiAdminClientsByIdApplicationsResponses];
+export type PutApiClientsByIdApplicationsResponse = PutApiClientsByIdApplicationsResponses[keyof PutApiClientsByIdApplicationsResponses];
 
-export type PostApiAdminClientsByIdApplicationsByAppIdDisableData = {
+export type PostApiClientsByIdApplicationsByAppIdDisableData = {
     body?: never;
     path: {
         /**
@@ -2772,29 +3258,29 @@ export type PostApiAdminClientsByIdApplicationsByAppIdDisableData = {
         /**
          * Application ID
          */
-        application_id: string;
+        applicationId: string;
     };
     query?: never;
-    url: '/api/clients/{id}/applications/{application_id}/disable';
+    url: '/api/clients/{id}/applications/{applicationId}/disable';
 };
 
-export type PostApiAdminClientsByIdApplicationsByAppIdDisableErrors = {
+export type PostApiClientsByIdApplicationsByAppIdDisableErrors = {
     /**
      * Client or application not found
      */
     404: unknown;
 };
 
-export type PostApiAdminClientsByIdApplicationsByAppIdDisableResponses = {
+export type PostApiClientsByIdApplicationsByAppIdDisableResponses = {
     /**
      * Application disabled
      */
     204: void;
 };
 
-export type PostApiAdminClientsByIdApplicationsByAppIdDisableResponse = PostApiAdminClientsByIdApplicationsByAppIdDisableResponses[keyof PostApiAdminClientsByIdApplicationsByAppIdDisableResponses];
+export type PostApiClientsByIdApplicationsByAppIdDisableResponse = PostApiClientsByIdApplicationsByAppIdDisableResponses[keyof PostApiClientsByIdApplicationsByAppIdDisableResponses];
 
-export type PostApiAdminClientsByIdApplicationsByAppIdEnableData = {
+export type PostApiClientsByIdApplicationsByAppIdEnableData = {
     body?: never;
     path: {
         /**
@@ -2804,29 +3290,29 @@ export type PostApiAdminClientsByIdApplicationsByAppIdEnableData = {
         /**
          * Application ID
          */
-        application_id: string;
+        applicationId: string;
     };
     query?: never;
-    url: '/api/clients/{id}/applications/{application_id}/enable';
+    url: '/api/clients/{id}/applications/{applicationId}/enable';
 };
 
-export type PostApiAdminClientsByIdApplicationsByAppIdEnableErrors = {
+export type PostApiClientsByIdApplicationsByAppIdEnableErrors = {
     /**
      * Client or application not found
      */
     404: unknown;
 };
 
-export type PostApiAdminClientsByIdApplicationsByAppIdEnableResponses = {
+export type PostApiClientsByIdApplicationsByAppIdEnableResponses = {
     /**
      * Application enabled
      */
     204: void;
 };
 
-export type PostApiAdminClientsByIdApplicationsByAppIdEnableResponse = PostApiAdminClientsByIdApplicationsByAppIdEnableResponses[keyof PostApiAdminClientsByIdApplicationsByAppIdEnableResponses];
+export type PostApiClientsByIdApplicationsByAppIdEnableResponse = PostApiClientsByIdApplicationsByAppIdEnableResponses[keyof PostApiClientsByIdApplicationsByAppIdEnableResponses];
 
-export type PostApiAdminClientsByIdDeactivateData = {
+export type PostApiClientsByIdDeactivateData = {
     body: StatusChangeRequest;
     path: {
         /**
@@ -2838,7 +3324,7 @@ export type PostApiAdminClientsByIdDeactivateData = {
     url: '/api/clients/{id}/deactivate';
 };
 
-export type PostApiAdminClientsByIdDeactivateErrors = {
+export type PostApiClientsByIdDeactivateErrors = {
     /**
      * Insufficient permissions
      */
@@ -2849,16 +3335,16 @@ export type PostApiAdminClientsByIdDeactivateErrors = {
     404: unknown;
 };
 
-export type PostApiAdminClientsByIdDeactivateResponses = {
+export type PostApiClientsByIdDeactivateResponses = {
     /**
      * Client deactivated
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiAdminClientsByIdDeactivateResponse = PostApiAdminClientsByIdDeactivateResponses[keyof PostApiAdminClientsByIdDeactivateResponses];
+export type PostApiClientsByIdDeactivateResponse = PostApiClientsByIdDeactivateResponses[keyof PostApiClientsByIdDeactivateResponses];
 
-export type PostApiAdminClientsByIdNotesData = {
+export type PostApiClientsByIdNotesData = {
     body: AddNoteRequest;
     path: {
         /**
@@ -2870,23 +3356,23 @@ export type PostApiAdminClientsByIdNotesData = {
     url: '/api/clients/{id}/notes';
 };
 
-export type PostApiAdminClientsByIdNotesErrors = {
+export type PostApiClientsByIdNotesErrors = {
     /**
      * Client not found
      */
     404: unknown;
 };
 
-export type PostApiAdminClientsByIdNotesResponses = {
+export type PostApiClientsByIdNotesResponses = {
     /**
      * Note added
      */
     200: AddNoteResponse;
 };
 
-export type PostApiAdminClientsByIdNotesResponse = PostApiAdminClientsByIdNotesResponses[keyof PostApiAdminClientsByIdNotesResponses];
+export type PostApiClientsByIdNotesResponse = PostApiClientsByIdNotesResponses[keyof PostApiClientsByIdNotesResponses];
 
-export type PostApiAdminClientsByIdSuspendData = {
+export type PostApiClientsByIdSuspendData = {
     body: StatusChangeRequest;
     path: {
         /**
@@ -2898,7 +3384,7 @@ export type PostApiAdminClientsByIdSuspendData = {
     url: '/api/clients/{id}/suspend';
 };
 
-export type PostApiAdminClientsByIdSuspendErrors = {
+export type PostApiClientsByIdSuspendErrors = {
     /**
      * Insufficient permissions
      */
@@ -2909,16 +3395,16 @@ export type PostApiAdminClientsByIdSuspendErrors = {
     404: unknown;
 };
 
-export type PostApiAdminClientsByIdSuspendResponses = {
+export type PostApiClientsByIdSuspendResponses = {
     /**
      * Client suspended
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiAdminClientsByIdSuspendResponse = PostApiAdminClientsByIdSuspendResponses[keyof PostApiAdminClientsByIdSuspendResponses];
+export type PostApiClientsByIdSuspendResponse = PostApiClientsByIdSuspendResponses[keyof PostApiClientsByIdSuspendResponses];
 
-export type GetApiAdminDispatchJobsData = {
+export type GetApiDispatchJobsData = {
     body?: never;
     path?: never;
     query?: {
@@ -2970,23 +3456,23 @@ export type GetApiAdminDispatchJobsData = {
     url: '/api/dispatch-jobs';
 };
 
-export type GetApiAdminDispatchJobsResponses = {
+export type GetApiDispatchJobsResponses = {
     /**
      * List of dispatch jobs
      */
     200: Array<DispatchJobReadResponse>;
 };
 
-export type GetApiAdminDispatchJobsResponse = GetApiAdminDispatchJobsResponses[keyof GetApiAdminDispatchJobsResponses];
+export type GetApiDispatchJobsResponse = GetApiDispatchJobsResponses[keyof GetApiDispatchJobsResponses];
 
-export type PostApiAdminDispatchJobsData = {
+export type PostApiDispatchJobsData = {
     body: CreateDispatchJobRequest;
     path?: never;
     query?: never;
     url: '/api/dispatch-jobs';
 };
 
-export type PostApiAdminDispatchJobsErrors = {
+export type PostApiDispatchJobsErrors = {
     /**
      * Invalid request
      */
@@ -2997,53 +3483,53 @@ export type PostApiAdminDispatchJobsErrors = {
     403: unknown;
 };
 
-export type PostApiAdminDispatchJobsResponses = {
+export type PostApiDispatchJobsResponses = {
     /**
      * Dispatch job created
      */
     201: CreatedResponse;
 };
 
-export type PostApiAdminDispatchJobsResponse = PostApiAdminDispatchJobsResponses[keyof PostApiAdminDispatchJobsResponses];
+export type PostApiDispatchJobsResponse = PostApiDispatchJobsResponses[keyof PostApiDispatchJobsResponses];
 
-export type GetApiAdminDispatchJobsByEventByEventIdData = {
+export type GetApiDispatchJobsByEventByEventIdData = {
     body?: never;
     path: {
         /**
          * Event ID
          */
-        event_id: string;
+        eventId: string;
     };
     query?: never;
-    url: '/api/dispatch-jobs/by-event/{event_id}';
+    url: '/api/dispatch-jobs/by-event/{eventId}';
 };
 
-export type GetApiAdminDispatchJobsByEventByEventIdResponses = {
+export type GetApiDispatchJobsByEventByEventIdResponses = {
     /**
      * Dispatch jobs for event
      */
     200: Array<DispatchJobResponse>;
 };
 
-export type GetApiAdminDispatchJobsByEventByEventIdResponse = GetApiAdminDispatchJobsByEventByEventIdResponses[keyof GetApiAdminDispatchJobsByEventByEventIdResponses];
+export type GetApiDispatchJobsByEventByEventIdResponse = GetApiDispatchJobsByEventByEventIdResponses[keyof GetApiDispatchJobsByEventByEventIdResponses];
 
-export type GetApiAdminDispatchJobsFilterOptionsData = {
+export type GetApiDispatchJobsFilterOptionsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/dispatch-jobs/filter-options';
 };
 
-export type GetApiAdminDispatchJobsFilterOptionsResponses = {
+export type GetApiDispatchJobsFilterOptionsResponses = {
     /**
      * Filter options
      */
     200: DispatchJobFilterOptionsResponse;
 };
 
-export type GetApiAdminDispatchJobsFilterOptionsResponse = GetApiAdminDispatchJobsFilterOptionsResponses[keyof GetApiAdminDispatchJobsFilterOptionsResponses];
+export type GetApiDispatchJobsFilterOptionsResponse = GetApiDispatchJobsFilterOptionsResponses[keyof GetApiDispatchJobsFilterOptionsResponses];
 
-export type GetApiAdminDispatchJobsRawData = {
+export type GetApiDispatchJobsRawData = {
     body?: never;
     path?: never;
     query?: {
@@ -3055,16 +3541,16 @@ export type GetApiAdminDispatchJobsRawData = {
     url: '/api/dispatch-jobs/raw';
 };
 
-export type GetApiAdminDispatchJobsRawResponses = {
+export type GetApiDispatchJobsRawResponses = {
     /**
      * Raw dispatch jobs
      */
     200: Array<DispatchJobResponse>;
 };
 
-export type GetApiAdminDispatchJobsRawResponse = GetApiAdminDispatchJobsRawResponses[keyof GetApiAdminDispatchJobsRawResponses];
+export type GetApiDispatchJobsRawResponse = GetApiDispatchJobsRawResponses[keyof GetApiDispatchJobsRawResponses];
 
-export type GetApiAdminDispatchJobsByIdData = {
+export type GetApiDispatchJobsByIdData = {
     body?: never;
     path: {
         /**
@@ -3076,23 +3562,23 @@ export type GetApiAdminDispatchJobsByIdData = {
     url: '/api/dispatch-jobs/{id}';
 };
 
-export type GetApiAdminDispatchJobsByIdErrors = {
+export type GetApiDispatchJobsByIdErrors = {
     /**
      * Dispatch job not found
      */
     404: unknown;
 };
 
-export type GetApiAdminDispatchJobsByIdResponses = {
+export type GetApiDispatchJobsByIdResponses = {
     /**
      * Dispatch job found
      */
     200: DispatchJobResponse;
 };
 
-export type GetApiAdminDispatchJobsByIdResponse = GetApiAdminDispatchJobsByIdResponses[keyof GetApiAdminDispatchJobsByIdResponses];
+export type GetApiDispatchJobsByIdResponse = GetApiDispatchJobsByIdResponses[keyof GetApiDispatchJobsByIdResponses];
 
-export type GetApiAdminDispatchJobsByIdAttemptsData = {
+export type GetApiDispatchJobsByIdAttemptsData = {
     body?: never;
     path: {
         /**
@@ -3104,23 +3590,23 @@ export type GetApiAdminDispatchJobsByIdAttemptsData = {
     url: '/api/dispatch-jobs/{id}/attempts';
 };
 
-export type GetApiAdminDispatchJobsByIdAttemptsErrors = {
+export type GetApiDispatchJobsByIdAttemptsErrors = {
     /**
      * Dispatch job not found
      */
     404: unknown;
 };
 
-export type GetApiAdminDispatchJobsByIdAttemptsResponses = {
+export type GetApiDispatchJobsByIdAttemptsResponses = {
     /**
      * Attempts list returned
      */
     200: Array<DispatchAttemptResponse>;
 };
 
-export type GetApiAdminDispatchJobsByIdAttemptsResponse = GetApiAdminDispatchJobsByIdAttemptsResponses[keyof GetApiAdminDispatchJobsByIdAttemptsResponses];
+export type GetApiDispatchJobsByIdAttemptsResponse = GetApiDispatchJobsByIdAttemptsResponses[keyof GetApiDispatchJobsByIdAttemptsResponses];
 
-export type GetApiAdminDispatchJobsByIdRawData = {
+export type GetApiDispatchJobsByIdRawData = {
     body?: never;
     path: {
         /**
@@ -3132,21 +3618,21 @@ export type GetApiAdminDispatchJobsByIdRawData = {
     url: '/api/dispatch-jobs/{id}/raw';
 };
 
-export type GetApiAdminDispatchJobsByIdRawErrors = {
+export type GetApiDispatchJobsByIdRawErrors = {
     /**
      * Dispatch job not found
      */
     404: unknown;
 };
 
-export type GetApiAdminDispatchJobsByIdRawResponses = {
+export type GetApiDispatchJobsByIdRawResponses = {
     /**
      * Raw dispatch job data
      */
     200: unknown;
 };
 
-export type GetApiAdminEventTypesData = {
+export type GetApiEventTypesData = {
     body?: never;
     path?: never;
     query: {
@@ -3163,27 +3649,35 @@ export type GetApiAdminEventTypesData = {
          * Filter by status
          */
         status?: string;
+        /**
+         * Filter by subdomain
+         */
+        subdomain?: string;
+        /**
+         * Filter by aggregate
+         */
+        aggregate?: string;
     };
     url: '/api/event-types';
 };
 
-export type GetApiAdminEventTypesResponses = {
+export type GetApiEventTypesResponses = {
     /**
      * List of event types
      */
     200: EventTypeListResponse;
 };
 
-export type GetApiAdminEventTypesResponse = GetApiAdminEventTypesResponses[keyof GetApiAdminEventTypesResponses];
+export type GetApiEventTypesResponse = GetApiEventTypesResponses[keyof GetApiEventTypesResponses];
 
-export type PostApiAdminEventTypesData = {
+export type PostApiEventTypesData = {
     body: CreateEventTypeRequest;
     path?: never;
     query?: never;
     url: '/api/event-types';
 };
 
-export type PostApiAdminEventTypesErrors = {
+export type PostApiEventTypesErrors = {
     /**
      * Validation error
      */
@@ -3194,16 +3688,16 @@ export type PostApiAdminEventTypesErrors = {
     409: unknown;
 };
 
-export type PostApiAdminEventTypesResponses = {
+export type PostApiEventTypesResponses = {
     /**
      * Event type created
      */
     201: CreatedResponse;
 };
 
-export type PostApiAdminEventTypesResponse = PostApiAdminEventTypesResponses[keyof PostApiAdminEventTypesResponses];
+export type PostApiEventTypesResponse = PostApiEventTypesResponses[keyof PostApiEventTypesResponses];
 
-export type GetApiAdminEventTypesByCodeByCodeData = {
+export type GetApiEventTypesByCodeByCodeData = {
     body?: never;
     path: {
         /**
@@ -3215,55 +3709,23 @@ export type GetApiAdminEventTypesByCodeByCodeData = {
     url: '/api/event-types/by-code/{code}';
 };
 
-export type GetApiAdminEventTypesByCodeByCodeErrors = {
+export type GetApiEventTypesByCodeByCodeErrors = {
     /**
      * Event type not found
      */
     404: unknown;
 };
 
-export type GetApiAdminEventTypesByCodeByCodeResponses = {
+export type GetApiEventTypesByCodeByCodeResponses = {
     /**
      * Event type found
      */
     200: EventTypeResponse;
 };
 
-export type GetApiAdminEventTypesByCodeByCodeResponse = GetApiAdminEventTypesByCodeByCodeResponses[keyof GetApiAdminEventTypesByCodeByCodeResponses];
+export type GetApiEventTypesByCodeByCodeResponse = GetApiEventTypesByCodeByCodeResponses[keyof GetApiEventTypesByCodeByCodeResponses];
 
-export type PostApiAdminEventTypesSyncData = {
-    body: SyncEventTypesRequest;
-    path?: never;
-    query?: {
-        /**
-         * Remove items not in the sync list
-         */
-        removeUnlisted?: boolean;
-    };
-    url: '/api/event-types/sync';
-};
-
-export type PostApiAdminEventTypesSyncErrors = {
-    /**
-     * Validation error
-     */
-    400: unknown;
-    /**
-     * Application not found
-     */
-    404: unknown;
-};
-
-export type PostApiAdminEventTypesSyncResponses = {
-    /**
-     * Event types synced
-     */
-    200: SyncResultResponse;
-};
-
-export type PostApiAdminEventTypesSyncResponse = PostApiAdminEventTypesSyncResponses[keyof PostApiAdminEventTypesSyncResponses];
-
-export type DeleteApiAdminEventTypesByIdData = {
+export type DeleteApiEventTypesByIdData = {
     body?: never;
     path: {
         /**
@@ -3275,23 +3737,23 @@ export type DeleteApiAdminEventTypesByIdData = {
     url: '/api/event-types/{id}';
 };
 
-export type DeleteApiAdminEventTypesByIdErrors = {
+export type DeleteApiEventTypesByIdErrors = {
     /**
      * Event type not found
      */
     404: unknown;
 };
 
-export type DeleteApiAdminEventTypesByIdResponses = {
+export type DeleteApiEventTypesByIdResponses = {
     /**
      * Event type archived
      */
     204: void;
 };
 
-export type DeleteApiAdminEventTypesByIdResponse = DeleteApiAdminEventTypesByIdResponses[keyof DeleteApiAdminEventTypesByIdResponses];
+export type DeleteApiEventTypesByIdResponse = DeleteApiEventTypesByIdResponses[keyof DeleteApiEventTypesByIdResponses];
 
-export type GetApiAdminEventTypesByIdData = {
+export type GetApiEventTypesByIdData = {
     body?: never;
     path: {
         /**
@@ -3303,23 +3765,23 @@ export type GetApiAdminEventTypesByIdData = {
     url: '/api/event-types/{id}';
 };
 
-export type GetApiAdminEventTypesByIdErrors = {
+export type GetApiEventTypesByIdErrors = {
     /**
      * Event type not found
      */
     404: unknown;
 };
 
-export type GetApiAdminEventTypesByIdResponses = {
+export type GetApiEventTypesByIdResponses = {
     /**
      * Event type found
      */
     200: EventTypeResponse;
 };
 
-export type GetApiAdminEventTypesByIdResponse = GetApiAdminEventTypesByIdResponses[keyof GetApiAdminEventTypesByIdResponses];
+export type GetApiEventTypesByIdResponse = GetApiEventTypesByIdResponses[keyof GetApiEventTypesByIdResponses];
 
-export type PutApiAdminEventTypesByIdData = {
+export type PutApiEventTypesByIdData = {
     body: UpdateEventTypeRequest;
     path: {
         /**
@@ -3331,23 +3793,23 @@ export type PutApiAdminEventTypesByIdData = {
     url: '/api/event-types/{id}';
 };
 
-export type PutApiAdminEventTypesByIdErrors = {
+export type PutApiEventTypesByIdErrors = {
     /**
      * Event type not found
      */
     404: unknown;
 };
 
-export type PutApiAdminEventTypesByIdResponses = {
+export type PutApiEventTypesByIdResponses = {
     /**
      * Event type updated
      */
     204: void;
 };
 
-export type PutApiAdminEventTypesByIdResponse = PutApiAdminEventTypesByIdResponses[keyof PutApiAdminEventTypesByIdResponses];
+export type PutApiEventTypesByIdResponse = PutApiEventTypesByIdResponses[keyof PutApiEventTypesByIdResponses];
 
-export type PostApiAdminEventTypesByIdSchemasData = {
+export type PostApiEventTypesByIdSchemasData = {
     body: AddSchemaVersionRequest;
     path: {
         /**
@@ -3359,23 +3821,23 @@ export type PostApiAdminEventTypesByIdSchemasData = {
     url: '/api/event-types/{id}/versions';
 };
 
-export type PostApiAdminEventTypesByIdSchemasErrors = {
+export type PostApiEventTypesByIdSchemasErrors = {
     /**
      * Event type not found
      */
     404: unknown;
 };
 
-export type PostApiAdminEventTypesByIdSchemasResponses = {
+export type PostApiEventTypesByIdSchemasResponses = {
     /**
      * Schema version added
      */
     200: EventTypeResponse;
 };
 
-export type PostApiAdminEventTypesByIdSchemasResponse = PostApiAdminEventTypesByIdSchemasResponses[keyof PostApiAdminEventTypesByIdSchemasResponses];
+export type PostApiEventTypesByIdSchemasResponse = PostApiEventTypesByIdSchemasResponses[keyof PostApiEventTypesByIdSchemasResponses];
 
-export type GetApiAdminEventsData = {
+export type GetApiEventsData = {
     body?: never;
     path?: never;
     query?: {
@@ -3415,23 +3877,23 @@ export type GetApiAdminEventsData = {
     url: '/api/events';
 };
 
-export type GetApiAdminEventsResponses = {
+export type GetApiEventsResponses = {
     /**
      * List of events
      */
     200: Array<EventRead>;
 };
 
-export type GetApiAdminEventsResponse = GetApiAdminEventsResponses[keyof GetApiAdminEventsResponses];
+export type GetApiEventsResponse = GetApiEventsResponses[keyof GetApiEventsResponses];
 
-export type PostApiAdminEventsData = {
+export type PostApiEventsData = {
     body: CreateEventRequest;
     path?: never;
     query?: never;
     url: '/api/events';
 };
 
-export type PostApiAdminEventsErrors = {
+export type PostApiEventsErrors = {
     /**
      * Validation error
      */
@@ -3442,7 +3904,7 @@ export type PostApiAdminEventsErrors = {
     403: unknown;
 };
 
-export type PostApiAdminEventsResponses = {
+export type PostApiEventsResponses = {
     /**
      * Event already exists (idempotent)
      */
@@ -3453,22 +3915,22 @@ export type PostApiAdminEventsResponses = {
     201: CreateEventResponse;
 };
 
-export type PostApiAdminEventsResponse = PostApiAdminEventsResponses[keyof PostApiAdminEventsResponses];
+export type PostApiEventsResponse = PostApiEventsResponses[keyof PostApiEventsResponses];
 
-export type GetApiAdminEventsFilterOptionsData = {
+export type GetApiEventsFilterOptionsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/events/filter-options';
 };
 
-export type GetApiAdminEventsFilterOptionsResponses = {
+export type GetApiEventsFilterOptionsResponses = {
     200: EventFilterOptions;
 };
 
-export type GetApiAdminEventsFilterOptionsResponse = GetApiAdminEventsFilterOptionsResponses[keyof GetApiAdminEventsFilterOptionsResponses];
+export type GetApiEventsFilterOptionsResponse = GetApiEventsFilterOptionsResponses[keyof GetApiEventsFilterOptionsResponses];
 
-export type GetApiAdminEventsRawData = {
+export type GetApiEventsRawData = {
     body?: never;
     path?: never;
     query?: {
@@ -3480,16 +3942,16 @@ export type GetApiAdminEventsRawData = {
     url: '/api/events/raw';
 };
 
-export type GetApiAdminEventsRawResponses = {
+export type GetApiEventsRawResponses = {
     /**
      * Raw events
      */
     200: Array<EventSummaryResponse>;
 };
 
-export type GetApiAdminEventsRawResponse = GetApiAdminEventsRawResponses[keyof GetApiAdminEventsRawResponses];
+export type GetApiEventsRawResponse = GetApiEventsRawResponses[keyof GetApiEventsRawResponses];
 
-export type GetApiAdminEventsByIdData = {
+export type GetApiEventsByIdData = {
     body?: never;
     path: {
         /**
@@ -3501,103 +3963,103 @@ export type GetApiAdminEventsByIdData = {
     url: '/api/events/{id}';
 };
 
-export type GetApiAdminEventsByIdErrors = {
+export type GetApiEventsByIdErrors = {
     /**
      * Event not found
      */
     404: unknown;
 };
 
-export type GetApiAdminEventsByIdResponses = {
+export type GetApiEventsByIdResponses = {
     /**
      * Event found
      */
     200: EventResponse;
 };
 
-export type GetApiAdminEventsByIdResponse = GetApiAdminEventsByIdResponses[keyof GetApiAdminEventsByIdResponses];
+export type GetApiEventsByIdResponse = GetApiEventsByIdResponses[keyof GetApiEventsByIdResponses];
 
-export type GetApiAdminMonitoringCircuitBreakersData = {
+export type GetApiMonitoringCircuitBreakersData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/monitoring/circuit-breakers';
 };
 
-export type GetApiAdminMonitoringCircuitBreakersResponses = {
+export type GetApiMonitoringCircuitBreakersResponses = {
     /**
      * Circuit breaker states
      */
     200: CircuitBreakersResponse;
 };
 
-export type GetApiAdminMonitoringCircuitBreakersResponse = GetApiAdminMonitoringCircuitBreakersResponses[keyof GetApiAdminMonitoringCircuitBreakersResponses];
+export type GetApiMonitoringCircuitBreakersResponse = GetApiMonitoringCircuitBreakersResponses[keyof GetApiMonitoringCircuitBreakersResponses];
 
-export type GetApiAdminMonitoringDashboardData = {
+export type GetApiMonitoringDashboardData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/monitoring/dashboard';
 };
 
-export type GetApiAdminMonitoringDashboardResponses = {
+export type GetApiMonitoringDashboardResponses = {
     /**
      * Dashboard metrics
      */
     200: DashboardMetrics;
 };
 
-export type GetApiAdminMonitoringDashboardResponse = GetApiAdminMonitoringDashboardResponses[keyof GetApiAdminMonitoringDashboardResponses];
+export type GetApiMonitoringDashboardResponse = GetApiMonitoringDashboardResponses[keyof GetApiMonitoringDashboardResponses];
 
-export type GetApiAdminMonitoringInFlightMessagesData = {
+export type GetApiMonitoringInFlightMessagesData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/monitoring/in-flight-messages';
 };
 
-export type GetApiAdminMonitoringInFlightMessagesResponses = {
+export type GetApiMonitoringInFlightMessagesResponses = {
     /**
      * In-flight messages
      */
     200: InFlightMessagesResponse;
 };
 
-export type GetApiAdminMonitoringInFlightMessagesResponse = GetApiAdminMonitoringInFlightMessagesResponses[keyof GetApiAdminMonitoringInFlightMessagesResponses];
+export type GetApiMonitoringInFlightMessagesResponse = GetApiMonitoringInFlightMessagesResponses[keyof GetApiMonitoringInFlightMessagesResponses];
 
-export type GetApiAdminMonitoringPoolStatsData = {
+export type GetApiMonitoringPoolStatsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/monitoring/pool-stats';
 };
 
-export type GetApiAdminMonitoringPoolStatsResponses = {
+export type GetApiMonitoringPoolStatsResponses = {
     /**
      * Pool statistics with enhanced metrics
      */
     200: PoolStatsResponse;
 };
 
-export type GetApiAdminMonitoringPoolStatsResponse = GetApiAdminMonitoringPoolStatsResponses[keyof GetApiAdminMonitoringPoolStatsResponses];
+export type GetApiMonitoringPoolStatsResponse = GetApiMonitoringPoolStatsResponses[keyof GetApiMonitoringPoolStatsResponses];
 
-export type GetApiAdminMonitoringStandbyStatusData = {
+export type GetApiMonitoringStandbyStatusData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/monitoring/standby-status';
 };
 
-export type GetApiAdminMonitoringStandbyStatusResponses = {
+export type GetApiMonitoringStandbyStatusResponses = {
     /**
      * Standby status
      */
     200: StandbyStatus;
 };
 
-export type GetApiAdminMonitoringStandbyStatusResponse = GetApiAdminMonitoringStandbyStatusResponses[keyof GetApiAdminMonitoringStandbyStatusResponses];
+export type GetApiMonitoringStandbyStatusResponse = GetApiMonitoringStandbyStatusResponses[keyof GetApiMonitoringStandbyStatusResponses];
 
-export type GetApiAdminOauthClientsData = {
+export type GetApiOauthClientsData = {
     body?: never;
     path?: never;
     query: {
@@ -3610,23 +4072,23 @@ export type GetApiAdminOauthClientsData = {
     url: '/api/oauth-clients';
 };
 
-export type GetApiAdminOauthClientsResponses = {
+export type GetApiOauthClientsResponses = {
     /**
      * List of OAuth clients
      */
     200: OAuthClientListResponse;
 };
 
-export type GetApiAdminOauthClientsResponse = GetApiAdminOauthClientsResponses[keyof GetApiAdminOauthClientsResponses];
+export type GetApiOauthClientsResponse = GetApiOauthClientsResponses[keyof GetApiOauthClientsResponses];
 
-export type PostApiAdminOauthClientsData = {
+export type PostApiOauthClientsData = {
     body: CreateOAuthClientRequest;
     path?: never;
     query?: never;
     url: '/api/oauth-clients';
 };
 
-export type PostApiAdminOauthClientsErrors = {
+export type PostApiOauthClientsErrors = {
     /**
      * Validation error
      */
@@ -3637,16 +4099,16 @@ export type PostApiAdminOauthClientsErrors = {
     409: unknown;
 };
 
-export type PostApiAdminOauthClientsResponses = {
+export type PostApiOauthClientsResponses = {
     /**
      * OAuth client created
      */
     201: CreateOAuthClientResponse;
 };
 
-export type PostApiAdminOauthClientsResponse = PostApiAdminOauthClientsResponses[keyof PostApiAdminOauthClientsResponses];
+export type PostApiOauthClientsResponse = PostApiOauthClientsResponses[keyof PostApiOauthClientsResponses];
 
-export type GetApiAdminOauthClientsByClientIdData = {
+export type GetApiOauthClientsByClientIdData = {
     body?: never;
     path: {
         /**
@@ -3658,23 +4120,23 @@ export type GetApiAdminOauthClientsByClientIdData = {
     url: '/api/oauth-clients/by-client-id/{clientId}';
 };
 
-export type GetApiAdminOauthClientsByClientIdErrors = {
+export type GetApiOauthClientsByClientIdErrors = {
     /**
      * OAuth client not found
      */
     404: unknown;
 };
 
-export type GetApiAdminOauthClientsByClientIdResponses = {
+export type GetApiOauthClientsByClientIdResponses = {
     /**
      * OAuth client found
      */
     200: OAuthClientResponse;
 };
 
-export type GetApiAdminOauthClientsByClientIdResponse = GetApiAdminOauthClientsByClientIdResponses[keyof GetApiAdminOauthClientsByClientIdResponses];
+export type GetApiOauthClientsByClientIdResponse = GetApiOauthClientsByClientIdResponses[keyof GetApiOauthClientsByClientIdResponses];
 
-export type DeleteApiAdminOauthClientsByIdData = {
+export type DeleteApiOauthClientsByIdData = {
     body?: never;
     path: {
         /**
@@ -3686,23 +4148,23 @@ export type DeleteApiAdminOauthClientsByIdData = {
     url: '/api/oauth-clients/{id}';
 };
 
-export type DeleteApiAdminOauthClientsByIdErrors = {
+export type DeleteApiOauthClientsByIdErrors = {
     /**
      * OAuth client not found
      */
     404: unknown;
 };
 
-export type DeleteApiAdminOauthClientsByIdResponses = {
+export type DeleteApiOauthClientsByIdResponses = {
     /**
      * OAuth client deleted
      */
     204: void;
 };
 
-export type DeleteApiAdminOauthClientsByIdResponse = DeleteApiAdminOauthClientsByIdResponses[keyof DeleteApiAdminOauthClientsByIdResponses];
+export type DeleteApiOauthClientsByIdResponse = DeleteApiOauthClientsByIdResponses[keyof DeleteApiOauthClientsByIdResponses];
 
-export type GetApiAdminOauthClientsByIdData = {
+export type GetApiOauthClientsByIdData = {
     body?: never;
     path: {
         /**
@@ -3714,23 +4176,23 @@ export type GetApiAdminOauthClientsByIdData = {
     url: '/api/oauth-clients/{id}';
 };
 
-export type GetApiAdminOauthClientsByIdErrors = {
+export type GetApiOauthClientsByIdErrors = {
     /**
      * OAuth client not found
      */
     404: unknown;
 };
 
-export type GetApiAdminOauthClientsByIdResponses = {
+export type GetApiOauthClientsByIdResponses = {
     /**
      * OAuth client found
      */
     200: OAuthClientResponse;
 };
 
-export type GetApiAdminOauthClientsByIdResponse = GetApiAdminOauthClientsByIdResponses[keyof GetApiAdminOauthClientsByIdResponses];
+export type GetApiOauthClientsByIdResponse = GetApiOauthClientsByIdResponses[keyof GetApiOauthClientsByIdResponses];
 
-export type PutApiAdminOauthClientsByIdData = {
+export type PutApiOauthClientsByIdData = {
     body: UpdateOAuthClientRequest;
     path: {
         /**
@@ -3742,23 +4204,23 @@ export type PutApiAdminOauthClientsByIdData = {
     url: '/api/oauth-clients/{id}';
 };
 
-export type PutApiAdminOauthClientsByIdErrors = {
+export type PutApiOauthClientsByIdErrors = {
     /**
      * OAuth client not found
      */
     404: unknown;
 };
 
-export type PutApiAdminOauthClientsByIdResponses = {
+export type PutApiOauthClientsByIdResponses = {
     /**
      * OAuth client updated
      */
     204: void;
 };
 
-export type PutApiAdminOauthClientsByIdResponse = PutApiAdminOauthClientsByIdResponses[keyof PutApiAdminOauthClientsByIdResponses];
+export type PutApiOauthClientsByIdResponse = PutApiOauthClientsByIdResponses[keyof PutApiOauthClientsByIdResponses];
 
-export type PostApiAdminOauthClientsActivateData = {
+export type PostApiOauthClientsActivateData = {
     body?: never;
     path: {
         /**
@@ -3770,23 +4232,23 @@ export type PostApiAdminOauthClientsActivateData = {
     url: '/api/oauth-clients/{id}/activate';
 };
 
-export type PostApiAdminOauthClientsActivateErrors = {
+export type PostApiOauthClientsActivateErrors = {
     /**
      * OAuth client not found
      */
     404: unknown;
 };
 
-export type PostApiAdminOauthClientsActivateResponses = {
+export type PostApiOauthClientsActivateResponses = {
     /**
      * OAuth client activated
      */
     200: SuccessResponse;
 };
 
-export type PostApiAdminOauthClientsActivateResponse = PostApiAdminOauthClientsActivateResponses[keyof PostApiAdminOauthClientsActivateResponses];
+export type PostApiOauthClientsActivateResponse = PostApiOauthClientsActivateResponses[keyof PostApiOauthClientsActivateResponses];
 
-export type PostApiAdminOauthClientsDeactivateData = {
+export type PostApiOauthClientsDeactivateData = {
     body?: never;
     path: {
         /**
@@ -3798,23 +4260,23 @@ export type PostApiAdminOauthClientsDeactivateData = {
     url: '/api/oauth-clients/{id}/deactivate';
 };
 
-export type PostApiAdminOauthClientsDeactivateErrors = {
+export type PostApiOauthClientsDeactivateErrors = {
     /**
      * OAuth client not found
      */
     404: unknown;
 };
 
-export type PostApiAdminOauthClientsDeactivateResponses = {
+export type PostApiOauthClientsDeactivateResponses = {
     /**
      * OAuth client deactivated
      */
     200: SuccessResponse;
 };
 
-export type PostApiAdminOauthClientsDeactivateResponse = PostApiAdminOauthClientsDeactivateResponses[keyof PostApiAdminOauthClientsDeactivateResponses];
+export type PostApiOauthClientsDeactivateResponse = PostApiOauthClientsDeactivateResponses[keyof PostApiOauthClientsDeactivateResponses];
 
-export type PostApiAdminOauthClientsRegenerateSecretData = {
+export type PostApiOauthClientsRegenerateSecretData = {
     body?: never;
     path: {
         /**
@@ -3826,23 +4288,23 @@ export type PostApiAdminOauthClientsRegenerateSecretData = {
     url: '/api/oauth-clients/{id}/regenerate-secret';
 };
 
-export type PostApiAdminOauthClientsRegenerateSecretErrors = {
+export type PostApiOauthClientsRegenerateSecretErrors = {
     /**
      * OAuth client not found
      */
     404: unknown;
 };
 
-export type PostApiAdminOauthClientsRegenerateSecretResponses = {
+export type PostApiOauthClientsRegenerateSecretResponses = {
     /**
      * New client secret generated
      */
     200: RegenerateSecretResponse;
 };
 
-export type PostApiAdminOauthClientsRegenerateSecretResponse = PostApiAdminOauthClientsRegenerateSecretResponses[keyof PostApiAdminOauthClientsRegenerateSecretResponses];
+export type PostApiOauthClientsRegenerateSecretResponse = PostApiOauthClientsRegenerateSecretResponses[keyof PostApiOauthClientsRegenerateSecretResponses];
 
-export type PostApiAdminOauthClientsRotateSecretData = {
+export type PostApiOauthClientsRotateSecretData = {
     body?: never;
     path: {
         /**
@@ -3854,23 +4316,23 @@ export type PostApiAdminOauthClientsRotateSecretData = {
     url: '/api/oauth-clients/{id}/rotate-secret';
 };
 
-export type PostApiAdminOauthClientsRotateSecretErrors = {
+export type PostApiOauthClientsRotateSecretErrors = {
     /**
      * OAuth client not found
      */
     404: unknown;
 };
 
-export type PostApiAdminOauthClientsRotateSecretResponses = {
+export type PostApiOauthClientsRotateSecretResponses = {
     /**
      * New client secret generated
      */
     200: RegenerateSecretResponse;
 };
 
-export type PostApiAdminOauthClientsRotateSecretResponse = PostApiAdminOauthClientsRotateSecretResponses[keyof PostApiAdminOauthClientsRotateSecretResponses];
+export type PostApiOauthClientsRotateSecretResponse = PostApiOauthClientsRotateSecretResponses[keyof PostApiOauthClientsRotateSecretResponses];
 
-export type GetApiAdminPrincipalsData = {
+export type GetApiPrincipalsData = {
     body?: never;
     path?: never;
     query?: {
@@ -3914,16 +4376,16 @@ export type GetApiAdminPrincipalsData = {
     url: '/api/principals';
 };
 
-export type GetApiAdminPrincipalsResponses = {
+export type GetApiPrincipalsResponses = {
     /**
      * List of principals
      */
     200: PrincipalListResponse;
 };
 
-export type GetApiAdminPrincipalsResponse = GetApiAdminPrincipalsResponses[keyof GetApiAdminPrincipalsResponses];
+export type GetApiPrincipalsResponse = GetApiPrincipalsResponses[keyof GetApiPrincipalsResponses];
 
-export type GetApiAdminPrincipalsCheckEmailDomainData = {
+export type GetApiPrincipalsCheckEmailDomainData = {
     body?: never;
     path?: never;
     query: {
@@ -3935,23 +4397,23 @@ export type GetApiAdminPrincipalsCheckEmailDomainData = {
     url: '/api/principals/check-email-domain';
 };
 
-export type GetApiAdminPrincipalsCheckEmailDomainResponses = {
+export type GetApiPrincipalsCheckEmailDomainResponses = {
     /**
      * Domain check result
      */
     200: CheckEmailDomainResponse;
 };
 
-export type GetApiAdminPrincipalsCheckEmailDomainResponse = GetApiAdminPrincipalsCheckEmailDomainResponses[keyof GetApiAdminPrincipalsCheckEmailDomainResponses];
+export type GetApiPrincipalsCheckEmailDomainResponse = GetApiPrincipalsCheckEmailDomainResponses[keyof GetApiPrincipalsCheckEmailDomainResponses];
 
-export type PostApiAdminPrincipalsUsersData = {
+export type PostApiPrincipalsUsersData = {
     body: CreateUserRequest;
     path?: never;
     query?: never;
     url: '/api/principals/users';
 };
 
-export type PostApiAdminPrincipalsUsersErrors = {
+export type PostApiPrincipalsUsersErrors = {
     /**
      * Validation error
      */
@@ -3962,16 +4424,16 @@ export type PostApiAdminPrincipalsUsersErrors = {
     409: unknown;
 };
 
-export type PostApiAdminPrincipalsUsersResponses = {
+export type PostApiPrincipalsUsersResponses = {
     /**
      * User created
      */
     201: PrincipalResponse;
 };
 
-export type PostApiAdminPrincipalsUsersResponse = PostApiAdminPrincipalsUsersResponses[keyof PostApiAdminPrincipalsUsersResponses];
+export type PostApiPrincipalsUsersResponse = PostApiPrincipalsUsersResponses[keyof PostApiPrincipalsUsersResponses];
 
-export type DeleteApiAdminPrincipalsByIdData = {
+export type DeleteApiPrincipalsByIdData = {
     body?: never;
     path: {
         /**
@@ -3983,23 +4445,23 @@ export type DeleteApiAdminPrincipalsByIdData = {
     url: '/api/principals/{id}';
 };
 
-export type DeleteApiAdminPrincipalsByIdErrors = {
+export type DeleteApiPrincipalsByIdErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type DeleteApiAdminPrincipalsByIdResponses = {
+export type DeleteApiPrincipalsByIdResponses = {
     /**
      * Principal deleted
      */
     204: void;
 };
 
-export type DeleteApiAdminPrincipalsByIdResponse = DeleteApiAdminPrincipalsByIdResponses[keyof DeleteApiAdminPrincipalsByIdResponses];
+export type DeleteApiPrincipalsByIdResponse = DeleteApiPrincipalsByIdResponses[keyof DeleteApiPrincipalsByIdResponses];
 
-export type GetApiAdminPrincipalsByIdData = {
+export type GetApiPrincipalsByIdData = {
     body?: never;
     path: {
         /**
@@ -4011,23 +4473,23 @@ export type GetApiAdminPrincipalsByIdData = {
     url: '/api/principals/{id}';
 };
 
-export type GetApiAdminPrincipalsByIdErrors = {
+export type GetApiPrincipalsByIdErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type GetApiAdminPrincipalsByIdResponses = {
+export type GetApiPrincipalsByIdResponses = {
     /**
      * Principal found
      */
     200: PrincipalResponse;
 };
 
-export type GetApiAdminPrincipalsByIdResponse = GetApiAdminPrincipalsByIdResponses[keyof GetApiAdminPrincipalsByIdResponses];
+export type GetApiPrincipalsByIdResponse = GetApiPrincipalsByIdResponses[keyof GetApiPrincipalsByIdResponses];
 
-export type PutApiAdminPrincipalsByIdData = {
+export type PutApiPrincipalsByIdData = {
     body: UpdatePrincipalRequest;
     path: {
         /**
@@ -4039,23 +4501,23 @@ export type PutApiAdminPrincipalsByIdData = {
     url: '/api/principals/{id}';
 };
 
-export type PutApiAdminPrincipalsByIdErrors = {
+export type PutApiPrincipalsByIdErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type PutApiAdminPrincipalsByIdResponses = {
+export type PutApiPrincipalsByIdResponses = {
     /**
      * Principal updated
      */
     200: PrincipalResponse;
 };
 
-export type PutApiAdminPrincipalsByIdResponse = PutApiAdminPrincipalsByIdResponses[keyof PutApiAdminPrincipalsByIdResponses];
+export type PutApiPrincipalsByIdResponse = PutApiPrincipalsByIdResponses[keyof PutApiPrincipalsByIdResponses];
 
-export type PostApiAdminPrincipalsByIdActivateData = {
+export type PostApiPrincipalsByIdActivateData = {
     body?: never;
     path: {
         /**
@@ -4067,7 +4529,7 @@ export type PostApiAdminPrincipalsByIdActivateData = {
     url: '/api/principals/{id}/activate';
 };
 
-export type PostApiAdminPrincipalsByIdActivateErrors = {
+export type PostApiPrincipalsByIdActivateErrors = {
     /**
      * Insufficient permissions
      */
@@ -4078,16 +4540,16 @@ export type PostApiAdminPrincipalsByIdActivateErrors = {
     404: unknown;
 };
 
-export type PostApiAdminPrincipalsByIdActivateResponses = {
+export type PostApiPrincipalsByIdActivateResponses = {
     /**
      * Principal activated
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiAdminPrincipalsByIdActivateResponse = PostApiAdminPrincipalsByIdActivateResponses[keyof PostApiAdminPrincipalsByIdActivateResponses];
+export type PostApiPrincipalsByIdActivateResponse = PostApiPrincipalsByIdActivateResponses[keyof PostApiPrincipalsByIdActivateResponses];
 
-export type GetApiAdminPrincipalsByIdApplicationAccessData = {
+export type GetApiPrincipalsByIdApplicationAccessData = {
     body?: never;
     path: {
         /**
@@ -4099,23 +4561,23 @@ export type GetApiAdminPrincipalsByIdApplicationAccessData = {
     url: '/api/principals/{id}/application-access';
 };
 
-export type GetApiAdminPrincipalsByIdApplicationAccessErrors = {
+export type GetApiPrincipalsByIdApplicationAccessErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type GetApiAdminPrincipalsByIdApplicationAccessResponses = {
+export type GetApiPrincipalsByIdApplicationAccessResponses = {
     /**
      * Application access list
      */
     200: ApplicationAccessListResponse;
 };
 
-export type GetApiAdminPrincipalsByIdApplicationAccessResponse = GetApiAdminPrincipalsByIdApplicationAccessResponses[keyof GetApiAdminPrincipalsByIdApplicationAccessResponses];
+export type GetApiPrincipalsByIdApplicationAccessResponse = GetApiPrincipalsByIdApplicationAccessResponses[keyof GetApiPrincipalsByIdApplicationAccessResponses];
 
-export type PutApiAdminPrincipalsByIdApplicationAccessData = {
+export type PutApiPrincipalsByIdApplicationAccessData = {
     body: SetApplicationAccessRequest;
     path: {
         /**
@@ -4127,23 +4589,23 @@ export type PutApiAdminPrincipalsByIdApplicationAccessData = {
     url: '/api/principals/{id}/application-access';
 };
 
-export type PutApiAdminPrincipalsByIdApplicationAccessErrors = {
+export type PutApiPrincipalsByIdApplicationAccessErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type PutApiAdminPrincipalsByIdApplicationAccessResponses = {
+export type PutApiPrincipalsByIdApplicationAccessResponses = {
     /**
      * Application access updated
      */
     200: SetApplicationAccessResponse;
 };
 
-export type PutApiAdminPrincipalsByIdApplicationAccessResponse = PutApiAdminPrincipalsByIdApplicationAccessResponses[keyof PutApiAdminPrincipalsByIdApplicationAccessResponses];
+export type PutApiPrincipalsByIdApplicationAccessResponse = PutApiPrincipalsByIdApplicationAccessResponses[keyof PutApiPrincipalsByIdApplicationAccessResponses];
 
-export type GetApiAdminPrincipalsByIdAvailableApplicationsData = {
+export type GetApiPrincipalsByIdAvailableApplicationsData = {
     body?: never;
     path: {
         /**
@@ -4155,23 +4617,23 @@ export type GetApiAdminPrincipalsByIdAvailableApplicationsData = {
     url: '/api/principals/{id}/available-applications';
 };
 
-export type GetApiAdminPrincipalsByIdAvailableApplicationsErrors = {
+export type GetApiPrincipalsByIdAvailableApplicationsErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type GetApiAdminPrincipalsByIdAvailableApplicationsResponses = {
+export type GetApiPrincipalsByIdAvailableApplicationsResponses = {
     /**
      * Available applications
      */
     200: AvailableApplicationsResponse;
 };
 
-export type GetApiAdminPrincipalsByIdAvailableApplicationsResponse = GetApiAdminPrincipalsByIdAvailableApplicationsResponses[keyof GetApiAdminPrincipalsByIdAvailableApplicationsResponses];
+export type GetApiPrincipalsByIdAvailableApplicationsResponse = GetApiPrincipalsByIdAvailableApplicationsResponses[keyof GetApiPrincipalsByIdAvailableApplicationsResponses];
 
-export type GetApiAdminPrincipalsByIdClientAccessData = {
+export type GetApiPrincipalsByIdClientAccessData = {
     body?: never;
     path: {
         /**
@@ -4183,23 +4645,23 @@ export type GetApiAdminPrincipalsByIdClientAccessData = {
     url: '/api/principals/{id}/client-access';
 };
 
-export type GetApiAdminPrincipalsByIdClientAccessErrors = {
+export type GetApiPrincipalsByIdClientAccessErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type GetApiAdminPrincipalsByIdClientAccessResponses = {
+export type GetApiPrincipalsByIdClientAccessResponses = {
     /**
      * Client access grants
      */
     200: ClientAccessListResponse;
 };
 
-export type GetApiAdminPrincipalsByIdClientAccessResponse = GetApiAdminPrincipalsByIdClientAccessResponses[keyof GetApiAdminPrincipalsByIdClientAccessResponses];
+export type GetApiPrincipalsByIdClientAccessResponse = GetApiPrincipalsByIdClientAccessResponses[keyof GetApiPrincipalsByIdClientAccessResponses];
 
-export type PostApiAdminPrincipalsByIdClientAccessData = {
+export type PostApiPrincipalsByIdClientAccessData = {
     body: GrantClientAccessRequest;
     path: {
         /**
@@ -4211,23 +4673,23 @@ export type PostApiAdminPrincipalsByIdClientAccessData = {
     url: '/api/principals/{id}/client-access';
 };
 
-export type PostApiAdminPrincipalsByIdClientAccessErrors = {
+export type PostApiPrincipalsByIdClientAccessErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type PostApiAdminPrincipalsByIdClientAccessResponses = {
+export type PostApiPrincipalsByIdClientAccessResponses = {
     /**
      * Client access granted
      */
     201: ClientAccessGrantResponse;
 };
 
-export type PostApiAdminPrincipalsByIdClientAccessResponse = PostApiAdminPrincipalsByIdClientAccessResponses[keyof PostApiAdminPrincipalsByIdClientAccessResponses];
+export type PostApiPrincipalsByIdClientAccessResponse = PostApiPrincipalsByIdClientAccessResponses[keyof PostApiPrincipalsByIdClientAccessResponses];
 
-export type DeleteApiAdminPrincipalsByIdClientAccessByClientIdData = {
+export type DeleteApiPrincipalsByIdClientAccessByClientIdData = {
     body?: never;
     path: {
         /**
@@ -4237,29 +4699,29 @@ export type DeleteApiAdminPrincipalsByIdClientAccessByClientIdData = {
         /**
          * Client ID to revoke
          */
-        client_id: string;
+        clientId: string;
     };
     query?: never;
-    url: '/api/principals/{id}/client-access/{client_id}';
+    url: '/api/principals/{id}/client-access/{clientId}';
 };
 
-export type DeleteApiAdminPrincipalsByIdClientAccessByClientIdErrors = {
+export type DeleteApiPrincipalsByIdClientAccessByClientIdErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type DeleteApiAdminPrincipalsByIdClientAccessByClientIdResponses = {
+export type DeleteApiPrincipalsByIdClientAccessByClientIdResponses = {
     /**
      * Client access revoked
      */
     204: void;
 };
 
-export type DeleteApiAdminPrincipalsByIdClientAccessByClientIdResponse = DeleteApiAdminPrincipalsByIdClientAccessByClientIdResponses[keyof DeleteApiAdminPrincipalsByIdClientAccessByClientIdResponses];
+export type DeleteApiPrincipalsByIdClientAccessByClientIdResponse = DeleteApiPrincipalsByIdClientAccessByClientIdResponses[keyof DeleteApiPrincipalsByIdClientAccessByClientIdResponses];
 
-export type PostApiAdminPrincipalsByIdDeactivateData = {
+export type PostApiPrincipalsByIdDeactivateData = {
     body?: never;
     path: {
         /**
@@ -4271,7 +4733,7 @@ export type PostApiAdminPrincipalsByIdDeactivateData = {
     url: '/api/principals/{id}/deactivate';
 };
 
-export type PostApiAdminPrincipalsByIdDeactivateErrors = {
+export type PostApiPrincipalsByIdDeactivateErrors = {
     /**
      * Insufficient permissions
      */
@@ -4282,16 +4744,16 @@ export type PostApiAdminPrincipalsByIdDeactivateErrors = {
     404: unknown;
 };
 
-export type PostApiAdminPrincipalsByIdDeactivateResponses = {
+export type PostApiPrincipalsByIdDeactivateResponses = {
     /**
      * Principal deactivated
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiAdminPrincipalsByIdDeactivateResponse = PostApiAdminPrincipalsByIdDeactivateResponses[keyof PostApiAdminPrincipalsByIdDeactivateResponses];
+export type PostApiPrincipalsByIdDeactivateResponse = PostApiPrincipalsByIdDeactivateResponses[keyof PostApiPrincipalsByIdDeactivateResponses];
 
-export type PostApiAdminPrincipalsByIdResetPasswordData = {
+export type PostApiPrincipalsByIdResetPasswordData = {
     body: ResetPasswordRequest;
     path: {
         /**
@@ -4303,7 +4765,7 @@ export type PostApiAdminPrincipalsByIdResetPasswordData = {
     url: '/api/principals/{id}/reset-password';
 };
 
-export type PostApiAdminPrincipalsByIdResetPasswordErrors = {
+export type PostApiPrincipalsByIdResetPasswordErrors = {
     /**
      * User is not internal auth or invalid password
      */
@@ -4318,16 +4780,16 @@ export type PostApiAdminPrincipalsByIdResetPasswordErrors = {
     404: unknown;
 };
 
-export type PostApiAdminPrincipalsByIdResetPasswordResponses = {
+export type PostApiPrincipalsByIdResetPasswordResponses = {
     /**
      * Password reset
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiAdminPrincipalsByIdResetPasswordResponse = PostApiAdminPrincipalsByIdResetPasswordResponses[keyof PostApiAdminPrincipalsByIdResetPasswordResponses];
+export type PostApiPrincipalsByIdResetPasswordResponse = PostApiPrincipalsByIdResetPasswordResponses[keyof PostApiPrincipalsByIdResetPasswordResponses];
 
-export type GetApiAdminPrincipalsByIdRolesData = {
+export type GetApiPrincipalsByIdRolesData = {
     body?: never;
     path: {
         /**
@@ -4339,23 +4801,23 @@ export type GetApiAdminPrincipalsByIdRolesData = {
     url: '/api/principals/{id}/roles';
 };
 
-export type GetApiAdminPrincipalsByIdRolesErrors = {
+export type GetApiPrincipalsByIdRolesErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type GetApiAdminPrincipalsByIdRolesResponses = {
+export type GetApiPrincipalsByIdRolesResponses = {
     /**
      * List of roles
      */
     200: RolesListResponse;
 };
 
-export type GetApiAdminPrincipalsByIdRolesResponse = GetApiAdminPrincipalsByIdRolesResponses[keyof GetApiAdminPrincipalsByIdRolesResponses];
+export type GetApiPrincipalsByIdRolesResponse = GetApiPrincipalsByIdRolesResponses[keyof GetApiPrincipalsByIdRolesResponses];
 
-export type PostApiAdminPrincipalsByIdRolesData = {
+export type PostApiPrincipalsByIdRolesData = {
     body: AssignRoleRequest;
     path: {
         /**
@@ -4367,23 +4829,23 @@ export type PostApiAdminPrincipalsByIdRolesData = {
     url: '/api/principals/{id}/roles';
 };
 
-export type PostApiAdminPrincipalsByIdRolesErrors = {
+export type PostApiPrincipalsByIdRolesErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type PostApiAdminPrincipalsByIdRolesResponses = {
+export type PostApiPrincipalsByIdRolesResponses = {
     /**
      * Role assigned
      */
     200: PrincipalResponse;
 };
 
-export type PostApiAdminPrincipalsByIdRolesResponse = PostApiAdminPrincipalsByIdRolesResponses[keyof PostApiAdminPrincipalsByIdRolesResponses];
+export type PostApiPrincipalsByIdRolesResponse = PostApiPrincipalsByIdRolesResponses[keyof PostApiPrincipalsByIdRolesResponses];
 
-export type PutApiAdminPrincipalsByIdRolesData = {
+export type PutApiPrincipalsByIdRolesData = {
     body: BatchAssignRolesRequest;
     path: {
         /**
@@ -4395,23 +4857,23 @@ export type PutApiAdminPrincipalsByIdRolesData = {
     url: '/api/principals/{id}/roles';
 };
 
-export type PutApiAdminPrincipalsByIdRolesErrors = {
+export type PutApiPrincipalsByIdRolesErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type PutApiAdminPrincipalsByIdRolesResponses = {
+export type PutApiPrincipalsByIdRolesResponses = {
     /**
      * Roles updated
      */
     200: BatchAssignRolesResponse;
 };
 
-export type PutApiAdminPrincipalsByIdRolesResponse = PutApiAdminPrincipalsByIdRolesResponses[keyof PutApiAdminPrincipalsByIdRolesResponses];
+export type PutApiPrincipalsByIdRolesResponse = PutApiPrincipalsByIdRolesResponses[keyof PutApiPrincipalsByIdRolesResponses];
 
-export type DeleteApiAdminPrincipalsByIdRolesByRoleNameData = {
+export type DeleteApiPrincipalsByIdRolesByRoleNameData = {
     body?: never;
     path: {
         /**
@@ -4427,23 +4889,23 @@ export type DeleteApiAdminPrincipalsByIdRolesByRoleNameData = {
     url: '/api/principals/{id}/roles/{role}';
 };
 
-export type DeleteApiAdminPrincipalsByIdRolesByRoleNameErrors = {
+export type DeleteApiPrincipalsByIdRolesByRoleNameErrors = {
     /**
      * Principal not found
      */
     404: unknown;
 };
 
-export type DeleteApiAdminPrincipalsByIdRolesByRoleNameResponses = {
+export type DeleteApiPrincipalsByIdRolesByRoleNameResponses = {
     /**
      * Role removed
      */
     200: PrincipalResponse;
 };
 
-export type DeleteApiAdminPrincipalsByIdRolesByRoleNameResponse = DeleteApiAdminPrincipalsByIdRolesByRoleNameResponses[keyof DeleteApiAdminPrincipalsByIdRolesByRoleNameResponses];
+export type DeleteApiPrincipalsByIdRolesByRoleNameResponse = DeleteApiPrincipalsByIdRolesByRoleNameResponses[keyof DeleteApiPrincipalsByIdRolesByRoleNameResponses];
 
-export type PostApiAdminPrincipalsByIdSendPasswordResetData = {
+export type PostApiPrincipalsByIdSendPasswordResetData = {
     body?: never;
     path: {
         /**
@@ -4455,7 +4917,7 @@ export type PostApiAdminPrincipalsByIdSendPasswordResetData = {
     url: '/api/principals/{id}/send-password-reset';
 };
 
-export type PostApiAdminPrincipalsByIdSendPasswordResetErrors = {
+export type PostApiPrincipalsByIdSendPasswordResetErrors = {
     /**
      * User is not eligible (OIDC, service account, or no email)
      */
@@ -4470,16 +4932,205 @@ export type PostApiAdminPrincipalsByIdSendPasswordResetErrors = {
     404: unknown;
 };
 
-export type PostApiAdminPrincipalsByIdSendPasswordResetResponses = {
+export type PostApiPrincipalsByIdSendPasswordResetResponses = {
     /**
      * Reset email queued
      */
     200: StatusChangeResponse;
 };
 
-export type PostApiAdminPrincipalsByIdSendPasswordResetResponse = PostApiAdminPrincipalsByIdSendPasswordResetResponses[keyof PostApiAdminPrincipalsByIdSendPasswordResetResponses];
+export type PostApiPrincipalsByIdSendPasswordResetResponse = PostApiPrincipalsByIdSendPasswordResetResponses[keyof PostApiPrincipalsByIdSendPasswordResetResponses];
 
-export type GetApiAdminRolesData = {
+export type GetApiProcessesData = {
+    body?: never;
+    path?: never;
+    query: {
+        pagination: PaginationParams;
+        application?: string;
+        subdomain?: string;
+        status?: string;
+        search?: string;
+    };
+    url: '/api/processes';
+};
+
+export type GetApiProcessesResponses = {
+    /**
+     * List of processes
+     */
+    200: ProcessListResponse;
+};
+
+export type GetApiProcessesResponse = GetApiProcessesResponses[keyof GetApiProcessesResponses];
+
+export type PostApiProcessesData = {
+    body: CreateProcessRequest;
+    path?: never;
+    query?: never;
+    url: '/api/processes';
+};
+
+export type PostApiProcessesErrors = {
+    /**
+     * Validation error
+     */
+    400: unknown;
+    /**
+     * Duplicate code
+     */
+    409: unknown;
+};
+
+export type PostApiProcessesResponses = {
+    /**
+     * Process created
+     */
+    201: CreatedResponse;
+};
+
+export type PostApiProcessesResponse = PostApiProcessesResponses[keyof PostApiProcessesResponses];
+
+export type GetApiProcessesByCodeData = {
+    body?: never;
+    path: {
+        /**
+         * Process code
+         */
+        code: string;
+    };
+    query?: never;
+    url: '/api/processes/by-code/{code}';
+};
+
+export type GetApiProcessesByCodeErrors = {
+    /**
+     * Process not found
+     */
+    404: unknown;
+};
+
+export type GetApiProcessesByCodeResponses = {
+    /**
+     * Process found
+     */
+    200: ProcessResponse;
+};
+
+export type GetApiProcessesByCodeResponse = GetApiProcessesByCodeResponses[keyof GetApiProcessesByCodeResponses];
+
+export type DeleteApiProcessesByIdData = {
+    body?: never;
+    path: {
+        /**
+         * Process ID
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/processes/{id}';
+};
+
+export type DeleteApiProcessesByIdErrors = {
+    /**
+     * Process not found
+     */
+    404: unknown;
+};
+
+export type DeleteApiProcessesByIdResponses = {
+    /**
+     * Process deleted
+     */
+    204: void;
+};
+
+export type DeleteApiProcessesByIdResponse = DeleteApiProcessesByIdResponses[keyof DeleteApiProcessesByIdResponses];
+
+export type GetApiProcessesByIdData = {
+    body?: never;
+    path: {
+        /**
+         * Process ID
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/processes/{id}';
+};
+
+export type GetApiProcessesByIdErrors = {
+    /**
+     * Process not found
+     */
+    404: unknown;
+};
+
+export type GetApiProcessesByIdResponses = {
+    /**
+     * Process found
+     */
+    200: ProcessResponse;
+};
+
+export type GetApiProcessesByIdResponse = GetApiProcessesByIdResponses[keyof GetApiProcessesByIdResponses];
+
+export type PutApiProcessesByIdData = {
+    body: UpdateProcessRequest;
+    path: {
+        /**
+         * Process ID
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/processes/{id}';
+};
+
+export type PutApiProcessesByIdErrors = {
+    /**
+     * Process not found
+     */
+    404: unknown;
+};
+
+export type PutApiProcessesByIdResponses = {
+    /**
+     * Process updated
+     */
+    204: void;
+};
+
+export type PutApiProcessesByIdResponse = PutApiProcessesByIdResponses[keyof PutApiProcessesByIdResponses];
+
+export type PostApiProcessesByIdArchiveData = {
+    body?: never;
+    path: {
+        /**
+         * Process ID
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/processes/{id}/archive';
+};
+
+export type PostApiProcessesByIdArchiveErrors = {
+    /**
+     * Process not found
+     */
+    404: unknown;
+};
+
+export type PostApiProcessesByIdArchiveResponses = {
+    /**
+     * Process archived
+     */
+    204: void;
+};
+
+export type PostApiProcessesByIdArchiveResponse = PostApiProcessesByIdArchiveResponses[keyof PostApiProcessesByIdArchiveResponses];
+
+export type GetApiRolesData = {
     body?: never;
     path?: never;
     query: {
@@ -4500,23 +5151,23 @@ export type GetApiAdminRolesData = {
     url: '/api/roles';
 };
 
-export type GetApiAdminRolesResponses = {
+export type GetApiRolesResponses = {
     /**
      * List of roles
      */
     200: RoleListResponse;
 };
 
-export type GetApiAdminRolesResponse = GetApiAdminRolesResponses[keyof GetApiAdminRolesResponses];
+export type GetApiRolesResponse = GetApiRolesResponses[keyof GetApiRolesResponses];
 
-export type PostApiAdminRolesData = {
+export type PostApiRolesData = {
     body: CreateRoleRequest;
     path?: never;
     query?: never;
     url: '/api/roles';
 };
 
-export type PostApiAdminRolesErrors = {
+export type PostApiRolesErrors = {
     /**
      * Validation error
      */
@@ -4527,37 +5178,37 @@ export type PostApiAdminRolesErrors = {
     409: unknown;
 };
 
-export type PostApiAdminRolesResponses = {
+export type PostApiRolesResponses = {
     /**
      * Role created
      */
     201: CreatedResponse;
 };
 
-export type PostApiAdminRolesResponse = PostApiAdminRolesResponses[keyof PostApiAdminRolesResponses];
+export type PostApiRolesResponse = PostApiRolesResponses[keyof PostApiRolesResponses];
 
-export type GetApiAdminRolesByApplicationByApplicationIdData = {
+export type GetApiRolesByApplicationByApplicationIdData = {
     body?: never;
     path: {
         /**
          * Application ID
          */
-        application_id: string;
+        applicationId: string;
     };
     query?: never;
-    url: '/api/roles/by-application/{application_id}';
+    url: '/api/roles/by-application/{applicationId}';
 };
 
-export type GetApiAdminRolesByApplicationByApplicationIdResponses = {
+export type GetApiRolesByApplicationByApplicationIdResponses = {
     /**
      * Roles filtered by application ID
      */
     200: Array<RoleResponse>;
 };
 
-export type GetApiAdminRolesByApplicationByApplicationIdResponse = GetApiAdminRolesByApplicationByApplicationIdResponses[keyof GetApiAdminRolesByApplicationByApplicationIdResponses];
+export type GetApiRolesByApplicationByApplicationIdResponse = GetApiRolesByApplicationByApplicationIdResponses[keyof GetApiRolesByApplicationByApplicationIdResponses];
 
-export type GetApiAdminRolesByCodeByCodeData = {
+export type GetApiRolesByCodeByCodeData = {
     body?: never;
     path: {
         /**
@@ -4569,23 +5220,23 @@ export type GetApiAdminRolesByCodeByCodeData = {
     url: '/api/roles/by-code/{code}';
 };
 
-export type GetApiAdminRolesByCodeByCodeErrors = {
+export type GetApiRolesByCodeByCodeErrors = {
     /**
      * Role not found
      */
     404: unknown;
 };
 
-export type GetApiAdminRolesByCodeByCodeResponses = {
+export type GetApiRolesByCodeByCodeResponses = {
     /**
      * Role found
      */
     200: RoleResponse;
 };
 
-export type GetApiAdminRolesByCodeByCodeResponse = GetApiAdminRolesByCodeByCodeResponses[keyof GetApiAdminRolesByCodeByCodeResponses];
+export type GetApiRolesByCodeByCodeResponse = GetApiRolesByCodeByCodeResponses[keyof GetApiRolesByCodeByCodeResponses];
 
-export type GetApiAdminRolesBySourceBySourceData = {
+export type GetApiRolesBySourceBySourceData = {
     body?: never;
     path: {
         /**
@@ -4597,55 +5248,55 @@ export type GetApiAdminRolesBySourceBySourceData = {
     url: '/api/roles/by-source/{source}';
 };
 
-export type GetApiAdminRolesBySourceBySourceErrors = {
+export type GetApiRolesBySourceBySourceErrors = {
     /**
      * Invalid source
      */
     400: unknown;
 };
 
-export type GetApiAdminRolesBySourceBySourceResponses = {
+export type GetApiRolesBySourceBySourceResponses = {
     /**
      * Roles filtered by source
      */
     200: Array<RoleResponse>;
 };
 
-export type GetApiAdminRolesBySourceBySourceResponse = GetApiAdminRolesBySourceBySourceResponses[keyof GetApiAdminRolesBySourceBySourceResponses];
+export type GetApiRolesBySourceBySourceResponse = GetApiRolesBySourceBySourceResponses[keyof GetApiRolesBySourceBySourceResponses];
 
-export type GetApiAdminRolesFiltersApplicationsData = {
+export type GetApiRolesFiltersApplicationsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/roles/filters/applications';
 };
 
-export type GetApiAdminRolesFiltersApplicationsResponses = {
+export type GetApiRolesFiltersApplicationsResponses = {
     /**
      * Application options
      */
     200: ApplicationOptionsResponse;
 };
 
-export type GetApiAdminRolesFiltersApplicationsResponse = GetApiAdminRolesFiltersApplicationsResponses[keyof GetApiAdminRolesFiltersApplicationsResponses];
+export type GetApiRolesFiltersApplicationsResponse = GetApiRolesFiltersApplicationsResponses[keyof GetApiRolesFiltersApplicationsResponses];
 
-export type GetApiAdminRolesPermissionsData = {
+export type GetApiRolesPermissionsData = {
     body?: never;
     path?: never;
     query?: never;
     url: '/api/roles/permissions';
 };
 
-export type GetApiAdminRolesPermissionsResponses = {
+export type GetApiRolesPermissionsResponses = {
     /**
      * List of permissions
      */
     200: PermissionListResponse;
 };
 
-export type GetApiAdminRolesPermissionsResponse = GetApiAdminRolesPermissionsResponses[keyof GetApiAdminRolesPermissionsResponses];
+export type GetApiRolesPermissionsResponse = GetApiRolesPermissionsResponses[keyof GetApiRolesPermissionsResponses];
 
-export type GetApiAdminRolesPermissionsByPermissionData = {
+export type GetApiRolesPermissionsByPermissionData = {
     body?: never;
     path: {
         /**
@@ -4657,165 +5308,165 @@ export type GetApiAdminRolesPermissionsByPermissionData = {
     url: '/api/roles/permissions/{permission}';
 };
 
-export type GetApiAdminRolesPermissionsByPermissionErrors = {
+export type GetApiRolesPermissionsByPermissionErrors = {
     /**
      * Permission not found
      */
     404: unknown;
 };
 
-export type GetApiAdminRolesPermissionsByPermissionResponses = {
+export type GetApiRolesPermissionsByPermissionResponses = {
     /**
      * Permission found
      */
     200: PermissionResponse;
 };
 
-export type GetApiAdminRolesPermissionsByPermissionResponse = GetApiAdminRolesPermissionsByPermissionResponses[keyof GetApiAdminRolesPermissionsByPermissionResponses];
+export type GetApiRolesPermissionsByPermissionResponse = GetApiRolesPermissionsByPermissionResponses[keyof GetApiRolesPermissionsByPermissionResponses];
 
-export type DeleteApiAdminRolesByNameData = {
+export type DeleteApiRolesByNameData = {
     body?: never;
     path: {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}';
+    url: '/api/roles/{roleName}';
 };
 
-export type DeleteApiAdminRolesByNameErrors = {
+export type DeleteApiRolesByNameErrors = {
     /**
      * Role not found
      */
     404: unknown;
 };
 
-export type DeleteApiAdminRolesByNameResponses = {
+export type DeleteApiRolesByNameResponses = {
     /**
      * Role deleted
      */
     204: void;
 };
 
-export type DeleteApiAdminRolesByNameResponse = DeleteApiAdminRolesByNameResponses[keyof DeleteApiAdminRolesByNameResponses];
+export type DeleteApiRolesByNameResponse = DeleteApiRolesByNameResponses[keyof DeleteApiRolesByNameResponses];
 
-export type GetApiAdminRolesByNameData = {
+export type GetApiRolesByNameData = {
     body?: never;
     path: {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}';
+    url: '/api/roles/{roleName}';
 };
 
-export type GetApiAdminRolesByNameErrors = {
+export type GetApiRolesByNameErrors = {
     /**
      * Role not found
      */
     404: unknown;
 };
 
-export type GetApiAdminRolesByNameResponses = {
+export type GetApiRolesByNameResponses = {
     /**
      * Role found
      */
     200: RoleResponse;
 };
 
-export type GetApiAdminRolesByNameResponse = GetApiAdminRolesByNameResponses[keyof GetApiAdminRolesByNameResponses];
+export type GetApiRolesByNameResponse = GetApiRolesByNameResponses[keyof GetApiRolesByNameResponses];
 
-export type PutApiAdminRolesByNameData = {
+export type PutApiRolesByNameData = {
     body: UpdateRoleRequest;
     path: {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}';
+    url: '/api/roles/{roleName}';
 };
 
-export type PutApiAdminRolesByNameErrors = {
+export type PutApiRolesByNameErrors = {
     /**
      * Role not found
      */
     404: unknown;
 };
 
-export type PutApiAdminRolesByNameResponses = {
+export type PutApiRolesByNameResponses = {
     /**
      * Role updated
      */
     204: void;
 };
 
-export type PutApiAdminRolesByNameResponse = PutApiAdminRolesByNameResponses[keyof PutApiAdminRolesByNameResponses];
+export type PutApiRolesByNameResponse = PutApiRolesByNameResponses[keyof PutApiRolesByNameResponses];
 
-export type PostApiAdminRolesByNamePermissionsData = {
+export type PostApiRolesByNamePermissionsData = {
     body: GrantPermissionRequest;
     path: {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}/permissions';
+    url: '/api/roles/{roleName}/permissions';
 };
 
-export type PostApiAdminRolesByNamePermissionsErrors = {
+export type PostApiRolesByNamePermissionsErrors = {
     /**
      * Role not found
      */
     404: unknown;
 };
 
-export type PostApiAdminRolesByNamePermissionsResponses = {
+export type PostApiRolesByNamePermissionsResponses = {
     /**
      * Permission granted
      */
     200: RoleResponse;
 };
 
-export type PostApiAdminRolesByNamePermissionsResponse = PostApiAdminRolesByNamePermissionsResponses[keyof PostApiAdminRolesByNamePermissionsResponses];
+export type PostApiRolesByNamePermissionsResponse = PostApiRolesByNamePermissionsResponses[keyof PostApiRolesByNamePermissionsResponses];
 
-export type DeleteApiAdminRolesByNamePermissionsByPermissionData = {
+export type DeleteApiRolesByNamePermissionsByPermissionData = {
     body?: never;
     path: {
         /**
          * Role name (code) or ID
          */
-        role_name: string;
+        roleName: string;
         /**
          * Permission to revoke
          */
         permission: string;
     };
     query?: never;
-    url: '/api/roles/{role_name}/permissions/{permission}';
+    url: '/api/roles/{roleName}/permissions/{permission}';
 };
 
-export type DeleteApiAdminRolesByNamePermissionsByPermissionErrors = {
+export type DeleteApiRolesByNamePermissionsByPermissionErrors = {
     /**
      * Role not found
      */
     404: unknown;
 };
 
-export type DeleteApiAdminRolesByNamePermissionsByPermissionResponses = {
+export type DeleteApiRolesByNamePermissionsByPermissionResponses = {
     /**
      * Permission revoked
      */
     200: RoleResponse;
 };
 
-export type DeleteApiAdminRolesByNamePermissionsByPermissionResponse = DeleteApiAdminRolesByNamePermissionsByPermissionResponses[keyof DeleteApiAdminRolesByNamePermissionsByPermissionResponses];
+export type DeleteApiRolesByNamePermissionsByPermissionResponse = DeleteApiRolesByNamePermissionsByPermissionResponses[keyof DeleteApiRolesByNamePermissionsByPermissionResponses];
 
 export type GetApiScheduledJobsData = {
     body?: never;
@@ -4887,10 +5538,10 @@ export type GetApiScheduledJobsInstancesByIdData = {
         /**
          * Instance ID
          */
-        instance_id: string;
+        instanceId: string;
     };
     query?: never;
-    url: '/api/scheduled-jobs/instances/{instance_id}';
+    url: '/api/scheduled-jobs/instances/{instanceId}';
 };
 
 export type GetApiScheduledJobsInstancesByIdErrors = {
@@ -4909,10 +5560,10 @@ export type PostApiScheduledJobsInstancesByIdCompleteData = {
         /**
          * Instance ID
          */
-        instance_id: string;
+        instanceId: string;
     };
     query?: never;
-    url: '/api/scheduled-jobs/instances/{instance_id}/complete';
+    url: '/api/scheduled-jobs/instances/{instanceId}/complete';
 };
 
 export type PostApiScheduledJobsInstancesByIdCompleteErrors = {
@@ -4932,10 +5583,10 @@ export type PostApiScheduledJobsInstancesByIdLogData = {
         /**
          * Instance ID
          */
-        instance_id: string;
+        instanceId: string;
     };
     query?: never;
-    url: '/api/scheduled-jobs/instances/{instance_id}/log';
+    url: '/api/scheduled-jobs/instances/{instanceId}/log';
 };
 
 export type PostApiScheduledJobsInstancesByIdLogErrors = {
@@ -4953,10 +5604,10 @@ export type GetApiScheduledJobsInstancesByIdLogsData = {
         /**
          * Instance ID
          */
-        instance_id: string;
+        instanceId: string;
     };
     query?: never;
-    url: '/api/scheduled-jobs/instances/{instance_id}/logs';
+    url: '/api/scheduled-jobs/instances/{instanceId}/logs';
 };
 
 export type GetApiScheduledJobsInstancesByIdLogsErrors = {
@@ -5151,7 +5802,7 @@ export type PostApiScheduledJobsByIdResumeResponses = {
 
 export type PostApiScheduledJobsByIdResumeResponse = PostApiScheduledJobsByIdResumeResponses[keyof PostApiScheduledJobsByIdResumeResponses];
 
-export type GetApiAdminSubscriptionsData = {
+export type GetApiSubscriptionsData = {
     body?: never;
     path?: never;
     query: {
@@ -5168,23 +5819,23 @@ export type GetApiAdminSubscriptionsData = {
     url: '/api/subscriptions';
 };
 
-export type GetApiAdminSubscriptionsResponses = {
+export type GetApiSubscriptionsResponses = {
     /**
      * List of subscriptions
      */
     200: SubscriptionListResponse;
 };
 
-export type GetApiAdminSubscriptionsResponse = GetApiAdminSubscriptionsResponses[keyof GetApiAdminSubscriptionsResponses];
+export type GetApiSubscriptionsResponse = GetApiSubscriptionsResponses[keyof GetApiSubscriptionsResponses];
 
-export type PostApiAdminSubscriptionsData = {
+export type PostApiSubscriptionsData = {
     body: CreateSubscriptionRequest;
     path?: never;
     query?: never;
     url: '/api/subscriptions';
 };
 
-export type PostApiAdminSubscriptionsErrors = {
+export type PostApiSubscriptionsErrors = {
     /**
      * Validation error
      */
@@ -5195,48 +5846,16 @@ export type PostApiAdminSubscriptionsErrors = {
     409: unknown;
 };
 
-export type PostApiAdminSubscriptionsResponses = {
+export type PostApiSubscriptionsResponses = {
     /**
      * Subscription created
      */
     201: CreatedResponse;
 };
 
-export type PostApiAdminSubscriptionsResponse = PostApiAdminSubscriptionsResponses[keyof PostApiAdminSubscriptionsResponses];
+export type PostApiSubscriptionsResponse = PostApiSubscriptionsResponses[keyof PostApiSubscriptionsResponses];
 
-export type PostApiAdminSubscriptionsSyncData = {
-    body: SyncSubscriptionsRequest;
-    path?: never;
-    query?: {
-        /**
-         * Remove items not in the sync list
-         */
-        removeUnlisted?: boolean;
-    };
-    url: '/api/subscriptions/sync';
-};
-
-export type PostApiAdminSubscriptionsSyncErrors = {
-    /**
-     * Validation error
-     */
-    400: unknown;
-    /**
-     * Application or connection not found
-     */
-    404: unknown;
-};
-
-export type PostApiAdminSubscriptionsSyncResponses = {
-    /**
-     * Subscriptions synced
-     */
-    200: SyncResultResponse;
-};
-
-export type PostApiAdminSubscriptionsSyncResponse = PostApiAdminSubscriptionsSyncResponses[keyof PostApiAdminSubscriptionsSyncResponses];
-
-export type DeleteApiAdminSubscriptionsByIdData = {
+export type DeleteApiSubscriptionsByIdData = {
     body?: never;
     path: {
         /**
@@ -5248,23 +5867,23 @@ export type DeleteApiAdminSubscriptionsByIdData = {
     url: '/api/subscriptions/{id}';
 };
 
-export type DeleteApiAdminSubscriptionsByIdErrors = {
+export type DeleteApiSubscriptionsByIdErrors = {
     /**
      * Subscription not found
      */
     404: unknown;
 };
 
-export type DeleteApiAdminSubscriptionsByIdResponses = {
+export type DeleteApiSubscriptionsByIdResponses = {
     /**
      * Subscription deleted
      */
     204: void;
 };
 
-export type DeleteApiAdminSubscriptionsByIdResponse = DeleteApiAdminSubscriptionsByIdResponses[keyof DeleteApiAdminSubscriptionsByIdResponses];
+export type DeleteApiSubscriptionsByIdResponse = DeleteApiSubscriptionsByIdResponses[keyof DeleteApiSubscriptionsByIdResponses];
 
-export type GetApiAdminSubscriptionsByIdData = {
+export type GetApiSubscriptionsByIdData = {
     body?: never;
     path: {
         /**
@@ -5276,23 +5895,23 @@ export type GetApiAdminSubscriptionsByIdData = {
     url: '/api/subscriptions/{id}';
 };
 
-export type GetApiAdminSubscriptionsByIdErrors = {
+export type GetApiSubscriptionsByIdErrors = {
     /**
      * Subscription not found
      */
     404: unknown;
 };
 
-export type GetApiAdminSubscriptionsByIdResponses = {
+export type GetApiSubscriptionsByIdResponses = {
     /**
      * Subscription found
      */
     200: SubscriptionResponse;
 };
 
-export type GetApiAdminSubscriptionsByIdResponse = GetApiAdminSubscriptionsByIdResponses[keyof GetApiAdminSubscriptionsByIdResponses];
+export type GetApiSubscriptionsByIdResponse = GetApiSubscriptionsByIdResponses[keyof GetApiSubscriptionsByIdResponses];
 
-export type PutApiAdminSubscriptionsByIdData = {
+export type PutApiSubscriptionsByIdData = {
     body: UpdateSubscriptionRequest;
     path: {
         /**
@@ -5304,23 +5923,23 @@ export type PutApiAdminSubscriptionsByIdData = {
     url: '/api/subscriptions/{id}';
 };
 
-export type PutApiAdminSubscriptionsByIdErrors = {
+export type PutApiSubscriptionsByIdErrors = {
     /**
      * Subscription not found
      */
     404: unknown;
 };
 
-export type PutApiAdminSubscriptionsByIdResponses = {
+export type PutApiSubscriptionsByIdResponses = {
     /**
      * Subscription updated
      */
     204: void;
 };
 
-export type PutApiAdminSubscriptionsByIdResponse = PutApiAdminSubscriptionsByIdResponses[keyof PutApiAdminSubscriptionsByIdResponses];
+export type PutApiSubscriptionsByIdResponse = PutApiSubscriptionsByIdResponses[keyof PutApiSubscriptionsByIdResponses];
 
-export type PostApiAdminSubscriptionsByIdPauseData = {
+export type PostApiSubscriptionsByIdPauseData = {
     body?: never;
     path: {
         /**
@@ -5332,23 +5951,23 @@ export type PostApiAdminSubscriptionsByIdPauseData = {
     url: '/api/subscriptions/{id}/pause';
 };
 
-export type PostApiAdminSubscriptionsByIdPauseErrors = {
+export type PostApiSubscriptionsByIdPauseErrors = {
     /**
      * Subscription not found
      */
     404: unknown;
 };
 
-export type PostApiAdminSubscriptionsByIdPauseResponses = {
+export type PostApiSubscriptionsByIdPauseResponses = {
     /**
      * Subscription paused
      */
     200: SubscriptionResponse;
 };
 
-export type PostApiAdminSubscriptionsByIdPauseResponse = PostApiAdminSubscriptionsByIdPauseResponses[keyof PostApiAdminSubscriptionsByIdPauseResponses];
+export type PostApiSubscriptionsByIdPauseResponse = PostApiSubscriptionsByIdPauseResponses[keyof PostApiSubscriptionsByIdPauseResponses];
 
-export type PostApiAdminSubscriptionsByIdResumeData = {
+export type PostApiSubscriptionsByIdResumeData = {
     body?: never;
     path: {
         /**
@@ -5360,21 +5979,21 @@ export type PostApiAdminSubscriptionsByIdResumeData = {
     url: '/api/subscriptions/{id}/resume';
 };
 
-export type PostApiAdminSubscriptionsByIdResumeErrors = {
+export type PostApiSubscriptionsByIdResumeErrors = {
     /**
      * Subscription not found
      */
     404: unknown;
 };
 
-export type PostApiAdminSubscriptionsByIdResumeResponses = {
+export type PostApiSubscriptionsByIdResumeResponses = {
     /**
      * Subscription resumed
      */
     200: SubscriptionResponse;
 };
 
-export type PostApiAdminSubscriptionsByIdResumeResponse = PostApiAdminSubscriptionsByIdResumeResponses[keyof PostApiAdminSubscriptionsByIdResumeResponses];
+export type PostApiSubscriptionsByIdResumeResponse = PostApiSubscriptionsByIdResumeResponses[keyof PostApiSubscriptionsByIdResumeResponses];
 
 export type GetAuthCheckDomainData = {
     body?: never;
@@ -5633,597 +6252,3 @@ export type PostWebauthnRegisterCompleteResponses = {
 };
 
 export type PostWebauthnRegisterCompleteResponse = PostWebauthnRegisterCompleteResponses[keyof PostWebauthnRegisterCompleteResponses];
-
-export type GetApiAdminDispatchJobs2Data = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Result size. Default 50, capped at 1000.
-         */
-        size?: number;
-        /**
-         * Filter by event ID
-         */
-        eventId?: string;
-        /**
-         * Filter by correlation ID
-         */
-        correlationId?: string;
-        /**
-         * Filter by subscription ID
-         */
-        subscriptionId?: string;
-        /**
-         * Filter by client IDs (comma-separated)
-         */
-        clientIds?: string;
-        /**
-         * Filter by statuses (comma-separated)
-         */
-        statuses?: string;
-        /**
-         * Filter by application codes (comma-separated)
-         */
-        applications?: string;
-        /**
-         * Filter by subdomains (comma-separated)
-         */
-        subdomains?: string;
-        /**
-         * Filter by aggregates (comma-separated)
-         */
-        aggregates?: string;
-        /**
-         * Filter by codes (comma-separated)
-         */
-        codes?: string;
-        /**
-         * Free-text search across code, subject, source
-         */
-        source?: string;
-    };
-    url: '/bff/dispatch-jobs';
-};
-
-export type GetApiAdminDispatchJobs2Responses = {
-    /**
-     * List of dispatch jobs
-     */
-    200: Array<DispatchJobReadResponse>;
-};
-
-export type GetApiAdminDispatchJobs2Response = GetApiAdminDispatchJobs2Responses[keyof GetApiAdminDispatchJobs2Responses];
-
-export type PostApiAdminDispatchJobs2Data = {
-    body: CreateDispatchJobRequest;
-    path?: never;
-    query?: never;
-    url: '/bff/dispatch-jobs';
-};
-
-export type PostApiAdminDispatchJobs2Errors = {
-    /**
-     * Invalid request
-     */
-    400: unknown;
-    /**
-     * No access to client
-     */
-    403: unknown;
-};
-
-export type PostApiAdminDispatchJobs2Responses = {
-    /**
-     * Dispatch job created
-     */
-    201: CreatedResponse;
-};
-
-export type PostApiAdminDispatchJobs2Response = PostApiAdminDispatchJobs2Responses[keyof PostApiAdminDispatchJobs2Responses];
-
-export type PostApiAdminDispatchJobsBatchData = {
-    body: BatchCreateDispatchJobsRequest;
-    path?: never;
-    query?: never;
-    url: '/bff/dispatch-jobs/batch';
-};
-
-export type PostApiAdminDispatchJobsBatchErrors = {
-    /**
-     * Invalid request or batch size exceeds limit
-     */
-    400: unknown;
-};
-
-export type PostApiAdminDispatchJobsBatchResponses = {
-    /**
-     * Dispatch jobs created
-     */
-    201: BatchCreateDispatchJobsResponse;
-};
-
-export type PostApiAdminDispatchJobsBatchResponse = PostApiAdminDispatchJobsBatchResponses[keyof PostApiAdminDispatchJobsBatchResponses];
-
-export type GetApiAdminDispatchJobsByEventByEventId2Data = {
-    body?: never;
-    path: {
-        /**
-         * Event ID
-         */
-        event_id: string;
-    };
-    query?: never;
-    url: '/bff/dispatch-jobs/by-event/{event_id}';
-};
-
-export type GetApiAdminDispatchJobsByEventByEventId2Responses = {
-    /**
-     * Dispatch jobs for event
-     */
-    200: Array<DispatchJobResponse>;
-};
-
-export type GetApiAdminDispatchJobsByEventByEventId2Response = GetApiAdminDispatchJobsByEventByEventId2Responses[keyof GetApiAdminDispatchJobsByEventByEventId2Responses];
-
-export type GetApiAdminDispatchJobsFilterOptions2Data = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/dispatch-jobs/filter-options';
-};
-
-export type GetApiAdminDispatchJobsFilterOptions2Responses = {
-    /**
-     * Filter options
-     */
-    200: DispatchJobFilterOptionsResponse;
-};
-
-export type GetApiAdminDispatchJobsFilterOptions2Response = GetApiAdminDispatchJobsFilterOptions2Responses[keyof GetApiAdminDispatchJobsFilterOptions2Responses];
-
-export type GetApiAdminDispatchJobsRaw2Data = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Result size. Default 50, capped at 1000.
-         */
-        size?: number;
-    };
-    url: '/bff/dispatch-jobs/raw';
-};
-
-export type GetApiAdminDispatchJobsRaw2Responses = {
-    /**
-     * Raw dispatch jobs
-     */
-    200: Array<DispatchJobResponse>;
-};
-
-export type GetApiAdminDispatchJobsRaw2Response = GetApiAdminDispatchJobsRaw2Responses[keyof GetApiAdminDispatchJobsRaw2Responses];
-
-export type GetApiAdminDispatchJobsById2Data = {
-    body?: never;
-    path: {
-        /**
-         * Dispatch job ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/bff/dispatch-jobs/{id}';
-};
-
-export type GetApiAdminDispatchJobsById2Errors = {
-    /**
-     * Dispatch job not found
-     */
-    404: unknown;
-};
-
-export type GetApiAdminDispatchJobsById2Responses = {
-    /**
-     * Dispatch job found
-     */
-    200: DispatchJobResponse;
-};
-
-export type GetApiAdminDispatchJobsById2Response = GetApiAdminDispatchJobsById2Responses[keyof GetApiAdminDispatchJobsById2Responses];
-
-export type GetApiAdminDispatchJobsByIdAttempts2Data = {
-    body?: never;
-    path: {
-        /**
-         * Dispatch job ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/bff/dispatch-jobs/{id}/attempts';
-};
-
-export type GetApiAdminDispatchJobsByIdAttempts2Errors = {
-    /**
-     * Dispatch job not found
-     */
-    404: unknown;
-};
-
-export type GetApiAdminDispatchJobsByIdAttempts2Responses = {
-    /**
-     * Attempts list returned
-     */
-    200: Array<DispatchAttemptResponse>;
-};
-
-export type GetApiAdminDispatchJobsByIdAttempts2Response = GetApiAdminDispatchJobsByIdAttempts2Responses[keyof GetApiAdminDispatchJobsByIdAttempts2Responses];
-
-export type GetApiAdminDispatchJobsByIdRaw2Data = {
-    body?: never;
-    path: {
-        /**
-         * Dispatch job ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/bff/dispatch-jobs/{id}/raw';
-};
-
-export type GetApiAdminDispatchJobsByIdRaw2Errors = {
-    /**
-     * Dispatch job not found
-     */
-    404: unknown;
-};
-
-export type GetApiAdminDispatchJobsByIdRaw2Responses = {
-    /**
-     * Raw dispatch job data
-     */
-    200: unknown;
-};
-
-export type GetApiAdminEvents2Data = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Result size. Default 50, capped at 1000.
-         */
-        size?: number;
-        /**
-         * Filter by client IDs (comma-separated)
-         */
-        clientIds?: string;
-        /**
-         * Filter by event types (comma-separated)
-         */
-        types?: string;
-        /**
-         * Filter by application codes (comma-separated)
-         */
-        applications?: string;
-        /**
-         * Filter by subdomains (comma-separated)
-         */
-        subdomains?: string;
-        /**
-         * Filter by aggregates (comma-separated)
-         */
-        aggregates?: string;
-        /**
-         * Filter by correlation ID
-         */
-        correlationId?: string;
-        /**
-         * Free-text search across type, source, subject
-         */
-        source?: string;
-    };
-    url: '/bff/events';
-};
-
-export type GetApiAdminEvents2Responses = {
-    /**
-     * List of events
-     */
-    200: Array<EventRead>;
-};
-
-export type GetApiAdminEvents2Response = GetApiAdminEvents2Responses[keyof GetApiAdminEvents2Responses];
-
-export type PostApiAdminEvents2Data = {
-    body: CreateEventRequest;
-    path?: never;
-    query?: never;
-    url: '/bff/events';
-};
-
-export type PostApiAdminEvents2Errors = {
-    /**
-     * Validation error
-     */
-    400: unknown;
-    /**
-     * No access to client
-     */
-    403: unknown;
-};
-
-export type PostApiAdminEvents2Responses = {
-    /**
-     * Event already exists (idempotent)
-     */
-    200: CreateEventResponse;
-    /**
-     * Event created
-     */
-    201: CreateEventResponse;
-};
-
-export type PostApiAdminEvents2Response = PostApiAdminEvents2Responses[keyof PostApiAdminEvents2Responses];
-
-export type PostApiAdminEventsBatchData = {
-    body: BatchCreateEventsRequest;
-    path?: never;
-    query?: never;
-    url: '/bff/events/batch';
-};
-
-export type PostApiAdminEventsBatchErrors = {
-    /**
-     * Invalid request or batch size exceeds limit
-     */
-    400: unknown;
-};
-
-export type PostApiAdminEventsBatchResponses = {
-    /**
-     * Events created
-     */
-    201: BatchCreateResponse;
-};
-
-export type PostApiAdminEventsBatchResponse = PostApiAdminEventsBatchResponses[keyof PostApiAdminEventsBatchResponses];
-
-export type GetApiAdminEventsFilterOptions2Data = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/events/filter-options';
-};
-
-export type GetApiAdminEventsFilterOptions2Responses = {
-    200: EventFilterOptions;
-};
-
-export type GetApiAdminEventsFilterOptions2Response = GetApiAdminEventsFilterOptions2Responses[keyof GetApiAdminEventsFilterOptions2Responses];
-
-export type GetApiAdminEventsRaw2Data = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Result size. Default 50, capped at 1000.
-         */
-        size?: number;
-    };
-    url: '/bff/events/raw';
-};
-
-export type GetApiAdminEventsRaw2Responses = {
-    /**
-     * Raw events
-     */
-    200: Array<EventSummaryResponse>;
-};
-
-export type GetApiAdminEventsRaw2Response = GetApiAdminEventsRaw2Responses[keyof GetApiAdminEventsRaw2Responses];
-
-export type GetApiAdminEventsById2Data = {
-    body?: never;
-    path: {
-        /**
-         * Event ID
-         */
-        id: string;
-    };
-    query?: never;
-    url: '/bff/events/{id}';
-};
-
-export type GetApiAdminEventsById2Errors = {
-    /**
-     * Event not found
-     */
-    404: unknown;
-};
-
-export type GetApiAdminEventsById2Responses = {
-    /**
-     * Event found
-     */
-    200: EventResponse;
-};
-
-export type GetApiAdminEventsById2Response = GetApiAdminEventsById2Responses[keyof GetApiAdminEventsById2Responses];
-
-export type GetApiAdminFilterOptionsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/filter-options';
-};
-
-export type GetApiAdminFilterOptionsResponses = {
-    /**
-     * All filter options
-     */
-    200: AllFilterOptions;
-};
-
-export type GetApiAdminFilterOptionsResponse = GetApiAdminFilterOptionsResponses[keyof GetApiAdminFilterOptionsResponses];
-
-export type GetApiAdminFilterOptionsClientsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/filter-options/clients';
-};
-
-export type GetApiAdminFilterOptionsClientsResponses = {
-    /**
-     * Client filter options
-     */
-    200: ClientFilterOptions;
-};
-
-export type GetApiAdminFilterOptionsClientsResponse = GetApiAdminFilterOptionsClientsResponses[keyof GetApiAdminFilterOptionsClientsResponses];
-
-export type GetApiAdminFilterOptionsDispatchJobsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/filter-options/dispatch-jobs';
-};
-
-export type GetApiAdminFilterOptionsDispatchJobsResponses = {
-    /**
-     * Dispatch jobs filter options
-     */
-    200: DispatchJobsFilterOptions;
-};
-
-export type GetApiAdminFilterOptionsDispatchJobsResponse = GetApiAdminFilterOptionsDispatchJobsResponses[keyof GetApiAdminFilterOptionsDispatchJobsResponses];
-
-export type GetApiAdminFilterOptionsDispatchPoolsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/filter-options/dispatch-pools';
-};
-
-export type GetApiAdminFilterOptionsDispatchPoolsResponses = {
-    /**
-     * Dispatch pool filter options
-     */
-    200: DispatchPoolFilterOptions;
-};
-
-export type GetApiAdminFilterOptionsDispatchPoolsResponse = GetApiAdminFilterOptionsDispatchPoolsResponses[keyof GetApiAdminFilterOptionsDispatchPoolsResponses];
-
-export type GetApiAdminFilterOptionsEventTypesData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/filter-options/event-types';
-};
-
-export type GetApiAdminFilterOptionsEventTypesResponses = {
-    /**
-     * Event type filter options
-     */
-    200: EventTypeFilterOptions;
-};
-
-export type GetApiAdminFilterOptionsEventTypesResponse = GetApiAdminFilterOptionsEventTypesResponses[keyof GetApiAdminFilterOptionsEventTypesResponses];
-
-export type GetApiAdminFilterOptionsEventTypesFiltersAggregatesData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Filter by application(s)
-         */
-        'application[]'?: Array<string>;
-        /**
-         * Filter by subdomain(s)
-         */
-        'subdomain[]'?: Array<string>;
-    };
-    url: '/bff/filter-options/event-types/filters/aggregates';
-};
-
-export type GetApiAdminFilterOptionsEventTypesFiltersAggregatesResponses = {
-    /**
-     * Aggregate filter options
-     */
-    200: AggregatesResponse;
-};
-
-export type GetApiAdminFilterOptionsEventTypesFiltersAggregatesResponse = GetApiAdminFilterOptionsEventTypesFiltersAggregatesResponses[keyof GetApiAdminFilterOptionsEventTypesFiltersAggregatesResponses];
-
-export type GetApiAdminFilterOptionsEventTypesFiltersApplicationsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/filter-options/event-types/filters/applications';
-};
-
-export type GetApiAdminFilterOptionsEventTypesFiltersApplicationsResponses = {
-    /**
-     * Application filter options
-     */
-    200: ApplicationsResponse;
-};
-
-export type GetApiAdminFilterOptionsEventTypesFiltersApplicationsResponse = GetApiAdminFilterOptionsEventTypesFiltersApplicationsResponses[keyof GetApiAdminFilterOptionsEventTypesFiltersApplicationsResponses];
-
-export type GetApiAdminFilterOptionsEventTypesFiltersSubdomainsData = {
-    body?: never;
-    path?: never;
-    query?: {
-        /**
-         * Filter by application(s)
-         */
-        'application[]'?: Array<string>;
-        /**
-         * Filter by subdomain(s)
-         */
-        'subdomain[]'?: Array<string>;
-    };
-    url: '/bff/filter-options/event-types/filters/subdomains';
-};
-
-export type GetApiAdminFilterOptionsEventTypesFiltersSubdomainsResponses = {
-    /**
-     * Subdomain filter options
-     */
-    200: SubdomainsResponse;
-};
-
-export type GetApiAdminFilterOptionsEventTypesFiltersSubdomainsResponse = GetApiAdminFilterOptionsEventTypesFiltersSubdomainsResponses[keyof GetApiAdminFilterOptionsEventTypesFiltersSubdomainsResponses];
-
-export type GetApiAdminEventsFilterOptions3Data = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/filter-options/events';
-};
-
-export type GetApiAdminEventsFilterOptions3Responses = {
-    /**
-     * Events filter options
-     */
-    200: EventsFilterOptions;
-};
-
-export type GetApiAdminEventsFilterOptions3Response = GetApiAdminEventsFilterOptions3Responses[keyof GetApiAdminEventsFilterOptions3Responses];
-
-export type GetApiAdminFilterOptionsSubscriptionsData = {
-    body?: never;
-    path?: never;
-    query?: never;
-    url: '/bff/filter-options/subscriptions';
-};
-
-export type GetApiAdminFilterOptionsSubscriptionsResponses = {
-    /**
-     * Subscription filter options
-     */
-    200: SubscriptionFilterOptions;
-};
-
-export type GetApiAdminFilterOptionsSubscriptionsResponse = GetApiAdminFilterOptionsSubscriptionsResponses[keyof GetApiAdminFilterOptionsSubscriptionsResponses];

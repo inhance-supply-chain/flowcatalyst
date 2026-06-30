@@ -30,7 +30,7 @@ use fc_queue::{QueueMetrics as FcQueueMetrics, QueuePublisher};
 use fc_stream::StreamHealthService;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -212,32 +212,6 @@ impl CachedBrokerStats {
             .await
             .map(|t| t.elapsed().as_secs())
     }
-}
-
-/// Spawn background task that refreshes broker stats every 60 seconds
-pub fn spawn_broker_stats_refresh(
-    cached: Arc<CachedBrokerStats>,
-    shutdown_tx: tokio::sync::broadcast::Sender<()>,
-) {
-    let mut shutdown_rx = shutdown_tx.subscribe();
-
-    tokio::spawn(async move {
-        // Initial fetch
-        cached.refresh().await;
-
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
-
-        loop {
-            tokio::select! {
-                _ = ticker.tick() => {
-                    cached.refresh().await;
-                }
-                _ = shutdown_rx.recv() => {
-                    break;
-                }
-            }
-        }
-    });
 }
 
 /// Simple health response for basic health check
@@ -493,16 +467,21 @@ pub fn create_router_with_options(
 ) -> Router {
     let cached_broker_stats = Arc::new(CachedBrokerStats::new(queue_manager.clone()));
 
-    // Start background refresh — no external wiring needed
+    // Background refresh of cached broker stats. The task holds only a `Weak`
+    // reference, so it exits on its own when the router (and the `AppState` that
+    // owns the `Arc<CachedBrokerStats>`) is dropped — the same self-terminating
+    // pattern as the mediator host-pool sweep task (`mediator/inner.rs`). This
+    // avoids the shutdown-channel plumbing whose omission previously leaked this
+    // task forever.
     {
-        let cached = cached_broker_stats.clone();
+        let weak: Weak<CachedBrokerStats> = Arc::downgrade(&cached_broker_stats);
         tokio::spawn(async move {
-            // Initial fetch
-            cached.refresh().await;
-
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
+                // First tick fires immediately, giving the initial fetch.
                 ticker.tick().await;
+                let Some(cached) = weak.upgrade() else { break };
                 cached.refresh().await;
             }
         });
@@ -546,7 +525,7 @@ pub fn create_router_with_options(
         .route("/monitoring", get(monitoring_handler))
         .route("/monitoring/health", get(dashboard_health_handler))
         .route("/monitoring/pools", get(pool_stats_handler))
-        .route("/monitoring/pools/{pool_code}", put(update_pool_config))
+        .route("/monitoring/pools/{poolCode}", put(update_pool_config))
         .route("/monitoring/queues", get(queue_metrics_handler))
         .route(
             "/monitoring/broker-stats/refresh",
@@ -987,10 +966,10 @@ async fn reload_config(
 /// Update pool configuration
 #[utoipa::path(
     put,
-    path = "/monitoring/pools/{pool_code}",
+    path = "/monitoring/pools/{poolCode}",
     tag = "monitoring",
     params(
-        ("pool_code" = String, Path, description = "Pool code to update")
+        ("poolCode" = String, Path, description = "Pool code to update")
     ),
     request_body = PoolConfigUpdateRequest,
     responses(

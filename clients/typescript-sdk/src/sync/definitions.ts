@@ -152,6 +152,64 @@ export interface PrincipalDefinition {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Process (workflow documentation)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A process documentation declaration.
+ *
+ * `code` is the full three-segment identifier `<app>:<subdomain>:<process>`,
+ * matching event-type conventions. `body` carries the diagram source
+ * verbatim — typically Mermaid; override `diagramType` if you publish a
+ * different format.
+ */
+export interface ProcessDefinition {
+	code: string;
+	name: string;
+	description?: string;
+	/** Diagram body. Stored verbatim. */
+	body?: string;
+	/** Diagram language. Platform applies `mermaid` when omitted. */
+	diagramType?: string;
+	tags?: string[];
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Scheduled job
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A scheduled-job declaration.
+ *
+ * `crons` accepts standard 5-field cron expressions; the platform's
+ * scheduler evaluates them in `timezone` (defaults to UTC server-side).
+ *
+ * `concurrent: true` lets the platform fire a new tick while a previous
+ * invocation is still running — most apps want false. Use the SDK's
+ * `LockProvider` for in-app dedupe if you need single-fire semantics
+ * across pods.
+ *
+ * `tracksCompletion: true` flips the platform from "webhook delivery is
+ * the success signal" to "consumer POSTs back to
+ * /api/scheduled-jobs/instances/{id}/complete when done", enabling
+ * per-instance status tracking.
+ */
+export interface ScheduledJobDefinition {
+	code: string;
+	name: string;
+	description?: string;
+	crons: string[];
+	timezone?: string;
+	payload?: unknown;
+	concurrent?: boolean;
+	tracksCompletion?: boolean;
+	timeoutSeconds?: number;
+	deliveryMaxAttempts?: number;
+	/** Override the application's default callback URL for this job. */
+	targetUrl?: string;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Definition set
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -163,6 +221,15 @@ export interface DefinitionSet {
 	subscriptions?: SubscriptionDefinition[];
 	dispatchPools?: DispatchPoolDefinition[];
 	principals?: PrincipalDefinition[];
+	processes?: ProcessDefinition[];
+	scheduledJobs?: ScheduledJobDefinition[];
+	/**
+	 * OpenAPI document (OpenAPI 3.x or Swagger 2.x) for this application,
+	 * as parsed JSON. Optional — only include if you want the platform to
+	 * track your REST surface in its catalogue. Each sync replaces the
+	 * previously published version.
+	 */
+	openapiSpec?: unknown;
 }
 
 /**
@@ -212,6 +279,25 @@ export class DefinitionSetBuilder {
 
 	withPrincipals(principals: PrincipalDefinition[]): this {
 		this.set.principals = [...(this.set.principals ?? []), ...principals];
+		return this;
+	}
+
+	withProcesses(processes: ProcessDefinition[]): this {
+		this.set.processes = [...(this.set.processes ?? []), ...processes];
+		return this;
+	}
+
+	withScheduledJobs(jobs: ScheduledJobDefinition[]): this {
+		this.set.scheduledJobs = [...(this.set.scheduledJobs ?? []), ...jobs];
+		return this;
+	}
+
+	/**
+	 * Attach an OpenAPI document (parsed JSON) to be published alongside
+	 * the rest of the application's definitions on next sync.
+	 */
+	withOpenapiSpec(spec: unknown): this {
+		this.set.openapiSpec = spec;
 		return this;
 	}
 

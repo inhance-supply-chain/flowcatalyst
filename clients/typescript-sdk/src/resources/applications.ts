@@ -9,8 +9,8 @@
  */
 
 import type { ResultAsync } from "neverthrow";
-import type { SdkError } from "../errors";
-import type { FlowCatalystClient } from "../client";
+import type { SdkError } from "../errors.js";
+import type { FlowCatalystClient } from "../client.js";
 
 export interface ApplicationResponse {
 	id: string;
@@ -255,7 +255,7 @@ export class ApplicationsResource {
 		return this.client.request<ApplicationRoleResponse[]>(
 			(httpClient, headers) =>
 				httpClient.get({
-					url: "/api/applications/{id}/roles",
+					url: "/api/applications/by-id/{id}/roles",
 					headers,
 					path: { id },
 				}),
